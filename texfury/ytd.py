@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from texfury.formats import (
-    BCFormat, BC_TO_DXGI, BC_TO_FOURCC, FOURCC_TO_BC, DXGI_TO_BC,
+    BCFormat, MipFilter, BC_TO_DXGI, BC_TO_FOURCC, FOURCC_TO_BC, DXGI_TO_BC,
     BC_TO_DX9, DX9_TO_BC,
     row_pitch, total_mip_data_size, mip_data_size, is_block_compressed,
 )
@@ -98,6 +98,7 @@ def create_ytd_from_folder(
     quality: float = 0.7,
     generate_mipmaps: bool = True,
     min_mip_size: int = 4,
+    mip_filter: MipFilter = MipFilter.MITCHELL,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> Path:
     """Create a YTD from all images in a folder.
@@ -116,6 +117,8 @@ def create_ytd_from_folder(
         Generate mipmap chains.
     min_mip_size : int
         Minimum dimension for smallest mip.
+    mip_filter : MipFilter
+        Downsampling filter for mipmap generation.
     on_progress : callable, optional
         Progress callback: (current_index, total_count, texture_name).
 
@@ -150,7 +153,8 @@ def create_ytd_from_folder(
         else:
             tex = Texture.from_image(f, format=format, quality=quality,
                                      generate_mipmaps=generate_mipmaps,
-                                     min_mip_size=min_mip_size, name=name)
+                                     min_mip_size=min_mip_size,
+                                     mip_filter=mip_filter, name=name)
         ytd.add(tex)
 
     ytd.save(output)
@@ -165,6 +169,7 @@ def batch_convert(
     quality: float = 0.7,
     generate_mipmaps: bool = True,
     min_mip_size: int = 4,
+    mip_filter: MipFilter = MipFilter.MITCHELL,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> Path:
     """Convert all images in a folder to DDS files.
@@ -183,6 +188,8 @@ def batch_convert(
         Generate mipmap chains.
     min_mip_size : int
         Minimum dimension for smallest mip.
+    mip_filter : MipFilter
+        Downsampling filter for mipmap generation.
     on_progress : callable, optional
         Progress callback: (current_index, total_count, texture_name).
 
@@ -214,7 +221,8 @@ def batch_convert(
 
         tex = Texture.from_image(f, format=format, quality=quality,
                                  generate_mipmaps=generate_mipmaps,
-                                 min_mip_size=min_mip_size, name=name)
+                                 min_mip_size=min_mip_size,
+                                 mip_filter=mip_filter, name=name)
         tex.save_dds(output_dir / f"{name}.dds")
 
     return output_dir

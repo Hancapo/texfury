@@ -100,6 +100,25 @@ from texfury import BCFormat
 
 ---
 
+### `MipFilter` — Downsampling Filters
+
+Controls how pixels are interpolated when generating mipmaps and resizing to power-of-two.
+
+```python
+from texfury import MipFilter
+```
+
+| Value | Description | Best for |
+|-------|-------------|----------|
+| `MipFilter.MITCHELL` | Balanced sharpness/smoothness (B=1/3, C=1/3). **Default.** | General-purpose |
+| `MipFilter.BOX` | Simple pixel average. Fast, correct for exact 2:1 downscale. | Fast iteration |
+| `MipFilter.TRIANGLE` | Bilinear interpolation. | Smooth gradients |
+| `MipFilter.CATMULL_ROM` | Sharp cubic interpolation. | Preserving edges/detail |
+| `MipFilter.CUBIC_BSPLINE` | Gaussian-like smoothing (B=1, C=0). | Maximum smoothness |
+| `MipFilter.POINT` | Nearest-neighbor, no interpolation. | Pixel art |
+
+---
+
 ### `Texture` — Core Texture Object
 
 Every operation in texfury produces or consumes a `Texture` object.
@@ -117,25 +136,26 @@ tex.data        # bytes — raw pixel data (all mip levels concatenated)
 
 #### Creating Textures
 
-##### `Texture.from_image(source, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, name)`
+##### `Texture.from_image(source, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, name)`
 
 Load an image file and compress it.
 
 ```python
 tex = Texture.from_image(
     "photo.png",
-    format=BCFormat.BC7,     # default
-    quality=0.7,             # 0.0 = fastest, 1.0 = best quality
-    generate_mipmaps=True,   # default
-    min_mip_size=4,          # smallest mip dimension (default: 4)
-    resize_to_pot=True,      # auto-resize to power-of-two (default)
-    name="my_texture",       # defaults to filename stem
+    format=BCFormat.BC7,            # default
+    quality=0.7,                    # 0.0 = fastest, 1.0 = best quality
+    generate_mipmaps=True,          # default
+    min_mip_size=4,                 # smallest mip dimension (default: 4)
+    resize_to_pot=True,             # auto-resize to power-of-two (default)
+    mip_filter=MipFilter.MITCHELL,  # downsampling filter (default)
+    name="my_texture",              # defaults to filename stem
 )
 ```
 
 **Supported image formats:** PNG, JPG/JPEG, TGA, BMP, PSD, WebP, GIF, HDR, PNM/PPM.
 
-##### `Texture.from_pil(image, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, name)`
+##### `Texture.from_pil(image, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, name)`
 
 Create from a Pillow `Image` object. Requires Pillow.
 
@@ -235,7 +255,7 @@ for tex in ytd.textures:
 
 ### Convenience Functions
 
-#### `create_ytd_from_folder(folder, output, *, format, quality, generate_mipmaps, min_mip_size, on_progress)`
+#### `create_ytd_from_folder(folder, output, *, format, quality, generate_mipmaps, min_mip_size, mip_filter, on_progress)`
 
 Convert all images in a folder into a single YTD file. Also picks up `.dds` files.
 
@@ -260,9 +280,10 @@ print(f"Created: {path}")
 | `quality` | `0.7` | Compression quality 0.0–1.0 |
 | `generate_mipmaps` | `True` | Generate mipmap chain |
 | `min_mip_size` | `4` | Minimum mip dimension |
+| `mip_filter` | `MITCHELL` | Downsampling filter for mipmaps |
 | `on_progress` | `None` | Callback `(current, total, name)` |
 
-#### `batch_convert(folder, output_dir, *, format, quality, generate_mipmaps, min_mip_size, on_progress)`
+#### `batch_convert(folder, output_dir, *, format, quality, generate_mipmaps, min_mip_size, mip_filter, on_progress)`
 
 Convert all images in a folder to individual DDS files.
 

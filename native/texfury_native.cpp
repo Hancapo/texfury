@@ -69,6 +69,27 @@ enum TfBCFormat {
     TF_A8R8G8B8 = 5,  // Uncompressed 32-bit BGRA
 };
 
+enum TfMipFilter {
+    TF_FILTER_BOX          = 0,
+    TF_FILTER_TRIANGLE     = 1,
+    TF_FILTER_CUBICBSPLINE = 2,
+    TF_FILTER_CATMULLROM   = 3,
+    TF_FILTER_MITCHELL     = 4,
+    TF_FILTER_POINT        = 5,
+};
+
+static stbir_filter tf_to_stbir_filter(int filter) {
+    switch (filter) {
+        case TF_FILTER_BOX:          return STBIR_FILTER_BOX;
+        case TF_FILTER_TRIANGLE:     return STBIR_FILTER_TRIANGLE;
+        case TF_FILTER_CUBICBSPLINE: return STBIR_FILTER_CUBICBSPLINE;
+        case TF_FILTER_CATMULLROM:   return STBIR_FILTER_CATMULLROM;
+        case TF_FILTER_MITCHELL:     return STBIR_FILTER_MITCHELL;
+        case TF_FILTER_POINT:        return STBIR_FILTER_POINT_SAMPLE;
+        default:                     return STBIR_FILTER_MITCHELL;
+    }
+}
+
 // ── Globals ──────────────────────────────────────────────────────────────────
 static bool g_initialized = false;
 
@@ -242,14 +263,21 @@ TF_API int tf_next_power_of_two(int v) {
 
 // ── Image transforms ─────────────────────────────────────────────────────────
 
-TF_API TfImage* tf_resize(const TfImage* img, int new_w, int new_h) {
+TF_API TfImage* tf_resize(const TfImage* img, int new_w, int new_h, int filter) {
     if (!img || !img->pixels || new_w <= 0 || new_h <= 0) return nullptr;
 
     uint8_t* out = (uint8_t*)malloc((size_t)new_w * new_h * 4);
     if (!out) return nullptr;
 
-    stbir_resize_uint8_srgb(img->pixels, img->width, img->height, 0,
-                             out, new_w, new_h, 0, STBIR_RGBA);
+    stbir_filter stb_filter = tf_to_stbir_filter(filter);
+
+    STBIR_RESIZE resize;
+    stbir_resize_init(&resize,
+                      img->pixels, img->width, img->height, 0,
+                      out, new_w, new_h, 0,
+                      STBIR_RGBA, STBIR_TYPE_UINT8_SRGB);
+    stbir_set_filters(&resize, stb_filter, stb_filter);
+    stbir_resize_extended(&resize);
 
     auto* r = new TfImage();
     r->pixels = out;
@@ -260,7 +288,7 @@ TF_API TfImage* tf_resize(const TfImage* img, int new_w, int new_h) {
     return r;
 }
 
-TF_API TfImage* tf_resize_to_pot(const TfImage* img) {
+TF_API TfImage* tf_resize_to_pot(const TfImage* img, int filter) {
     if (!img) return nullptr;
     int pw = (int)next_pot((uint32_t)img->width);
     int ph = (int)next_pot((uint32_t)img->height);
@@ -268,7 +296,7 @@ TF_API TfImage* tf_resize_to_pot(const TfImage* img) {
         // Already POT, return a copy
         return tf_create_image(img->width, img->height, img->pixels);
     }
-    return tf_resize(img, pw, ph);
+    return tf_resize(img, pw, ph, filter);
 }
 
 // ── Block compression ────────────────────────────────────────────────────────
@@ -417,7 +445,7 @@ static void compress_blocks_bc7(const uint8_t* rgba, int w, int h,
 
 TF_API TfCompressed* tf_compress(const TfImage* img, int format,
                                   int generate_mipmaps, int min_mip_dim,
-                                  float quality) {
+                                  float quality, int mip_filter) {
     if (!img || !img->pixels) return nullptr;
     ensure_init();
 
@@ -468,8 +496,16 @@ TF_API TfCompressed* tf_compress(const TfImage* img, int format,
             // Downsample from original for better quality
             if (resized_buf) free(resized_buf);
             resized_buf = (uint8_t*)malloc((size_t)mw * mh * 4);
-            stbir_resize_uint8_srgb(img->pixels, w, h, 0,
-                                     resized_buf, mw, mh, 0, STBIR_RGBA);
+
+            stbir_filter stb_filt = tf_to_stbir_filter(mip_filter);
+            STBIR_RESIZE rs;
+            stbir_resize_init(&rs,
+                              img->pixels, w, h, 0,
+                              resized_buf, mw, mh, 0,
+                              STBIR_RGBA, STBIR_TYPE_UINT8_SRGB);
+            stbir_set_filters(&rs, stb_filt, stb_filt);
+            stbir_resize_extended(&rs);
+
             src = resized_buf;
         }
 

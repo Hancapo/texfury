@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from texfury import _native as native
-from texfury.formats import BCFormat, BC_TO_DXGI, BC_TO_FOURCC, is_block_compressed
+from texfury.formats import BCFormat, MipFilter, BC_TO_DXGI, BC_TO_FOURCC, is_block_compressed
 
 if TYPE_CHECKING:
     pass
@@ -84,6 +84,7 @@ class Texture:
                    generate_mipmaps: bool = True,
                    min_mip_size: int = 4,
                    resize_to_pot: bool = True,
+                   mip_filter: MipFilter = MipFilter.MITCHELL,
                    name: str = "") -> Texture:
         """Load an image file and compress it.
 
@@ -101,6 +102,8 @@ class Texture:
             Minimum dimension for smallest mip level.
         resize_to_pot : bool
             Resize to nearest power-of-two if needed.
+        mip_filter : MipFilter
+            Downsampling filter for mipmap generation and POT resize.
         name : str
             Texture name (defaults to filename stem).
         """
@@ -114,6 +117,7 @@ class Texture:
                                         generate_mipmaps=generate_mipmaps,
                                         min_mip_size=min_mip_size,
                                         resize_to_pot=resize_to_pot,
+                                        mip_filter=mip_filter,
                                         name=name)
         finally:
             native.free_image(img)
@@ -125,6 +129,7 @@ class Texture:
                  generate_mipmaps: bool = True,
                  min_mip_size: int = 4,
                  resize_to_pot: bool = True,
+                 mip_filter: MipFilter = MipFilter.MITCHELL,
                  name: str = "") -> Texture:
         """Create a Texture from a PIL/Pillow Image object.
 
@@ -142,6 +147,7 @@ class Texture:
                                         generate_mipmaps=generate_mipmaps,
                                         min_mip_size=min_mip_size,
                                         resize_to_pot=resize_to_pot,
+                                        mip_filter=mip_filter,
                                         name=name)
         finally:
             native.free_image(img)
@@ -184,18 +190,19 @@ class Texture:
     @classmethod
     def _compress_image(cls, img, *, format: BCFormat, quality: float,
                         generate_mipmaps: bool, min_mip_size: int,
-                        resize_to_pot: bool, name: str) -> Texture:
+                        resize_to_pot: bool, mip_filter: MipFilter,
+                        name: str) -> Texture:
         work_img = img
         resized = None
 
         if resize_to_pot and not native.is_power_of_two(
                 native.image_width(img), native.image_height(img)):
-            resized = native.resize_to_pot(img)
+            resized = native.resize_to_pot(img, int(mip_filter))
             work_img = resized
 
         try:
             c = native.compress(work_img, int(format), generate_mipmaps,
-                                min_mip_size, quality)
+                                min_mip_size, quality, int(mip_filter))
             try:
                 return cls._from_compressed_handle(c, name)
             finally:

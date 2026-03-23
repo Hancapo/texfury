@@ -14,6 +14,17 @@ class BCFormat(IntEnum):
     A8R8G8B8 = 5  # Uncompressed 32-bit BGRA.
 
 
+class MipFilter(IntEnum):
+    """Downsampling filter for mipmap generation and image resizing."""
+
+    BOX = 0           # Simple average. Fast, correct for exact 2:1 downscale.
+    TRIANGLE = 1      # Bilinear interpolation.
+    CUBIC_BSPLINE = 2 # Gaussian-like smoothing (B=1, C=0).
+    CATMULL_ROM = 3   # Sharp cubic interpolation. Good for upscaling.
+    MITCHELL = 4      # Balanced sharpness/smoothness (B=1/3, C=1/3). Best general-purpose.
+    POINT = 5         # Nearest-neighbor. No interpolation.
+
+
 def is_block_compressed(fmt: BCFormat) -> bool:
     """Return True if the format uses block compression."""
     return fmt != BCFormat.A8R8G8B8

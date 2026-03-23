@@ -76,10 +76,10 @@ _lib.tf_next_power_of_two.argtypes = [ctypes.c_int]
 _lib.tf_next_power_of_two.restype = ctypes.c_int
 
 # Image transforms
-_lib.tf_resize.argtypes = [TfImage, ctypes.c_int, ctypes.c_int]
+_lib.tf_resize.argtypes = [TfImage, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 _lib.tf_resize.restype = TfImage
 
-_lib.tf_resize_to_pot.argtypes = [TfImage]
+_lib.tf_resize_to_pot.argtypes = [TfImage, ctypes.c_int]
 _lib.tf_resize_to_pot.restype = TfImage
 
 # Compression
@@ -89,6 +89,7 @@ _lib.tf_compress.argtypes = [
     ctypes.c_int,      # generate_mipmaps
     ctypes.c_int,      # min_mip_dim
     ctypes.c_float,    # quality (0.0 - 1.0)
+    ctypes.c_int,      # mip_filter (MipFilter)
 ]
 _lib.tf_compress.restype = TfCompressed
 
@@ -182,21 +183,21 @@ def is_power_of_two(w: int, h: int) -> bool:
 def next_power_of_two(v: int) -> int:
     return _lib.tf_next_power_of_two(v)
 
-def resize(h: TfImage, w: int, hh: int) -> TfImage:
-    r = _lib.tf_resize(h, w, hh)
+def resize(h: TfImage, w: int, hh: int, filter: int = 4) -> TfImage:
+    r = _lib.tf_resize(h, w, hh, filter)
     if not r:
         raise RuntimeError("Failed to resize image")
     return r
 
-def resize_to_pot(h: TfImage) -> TfImage:
-    r = _lib.tf_resize_to_pot(h)
+def resize_to_pot(h: TfImage, filter: int = 4) -> TfImage:
+    r = _lib.tf_resize_to_pot(h, filter)
     if not r:
         raise RuntimeError("Failed to resize to power-of-two")
     return r
 
 def compress(h: TfImage, fmt: int, mipmaps: bool, min_mip: int,
-             quality: float) -> TfCompressed:
-    c = _lib.tf_compress(h, fmt, 1 if mipmaps else 0, min_mip, quality)
+             quality: float, mip_filter: int = 4) -> TfCompressed:
+    c = _lib.tf_compress(h, fmt, 1 if mipmaps else 0, min_mip, quality, mip_filter)
     if not c:
         raise RuntimeError("Compression failed")
     return c
