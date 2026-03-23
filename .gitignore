@@ -1,0 +1,27 @@
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Test output
+test_output/
+
+# Native build intermediates
+native/..texfury*
+*.exp
+*.lib
+*.obj
+*.pdb
+*.ilk
+
+# Code review graph (local tool)
+.code-review-graph/
+
+# IDE
+.vscode/
+.idea/

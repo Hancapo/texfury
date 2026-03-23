@@ -7,7 +7,15 @@ name = "texfury"
 version = "1.0.0"
 description = "Fast image-to-DDS conversion and GTA V YTD texture dictionaries"
 requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
 dependencies = []
 
 [project.optional-dependencies]
 pil = ["Pillow"]
+
+[tool.setuptools.packages.find]
+include = ["texfury*"]
+
+[tool.setuptools.package-data]
+texfury = ["*.dll"]
