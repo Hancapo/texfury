@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 
 // ── Export macro ─────────────────────────────────────────────────────────────
@@ -812,6 +813,172 @@ TF_API TfCompressed* tf_load_dds(const wchar_t* path) {
     result->mip_offsets = offsets;
     result->mip_sizes = sizes_arr;
     return result;
+}
+
+// ── Block decompression ──────────────────────────────────────────────────────
+
+// Decompress a single mip level to RGBA. Returns malloc'd buffer.
+static uint8_t* decompress_mip(const uint8_t* src, int w, int h, TfBCFormat fmt) {
+    size_t px_count = (size_t)w * h;
+    uint8_t* rgba = (uint8_t*)malloc(px_count * 4);
+    if (!rgba) return nullptr;
+
+    if (fmt == TF_A8R8G8B8) {
+        // BGRA → RGBA swizzle
+        for (size_t p = 0; p < px_count; p++) {
+            rgba[p * 4 + 0] = src[p * 4 + 2]; // R
+            rgba[p * 4 + 1] = src[p * 4 + 1]; // G
+            rgba[p * 4 + 2] = src[p * 4 + 0]; // B
+            rgba[p * 4 + 3] = src[p * 4 + 3]; // A
+        }
+        return rgba;
+    }
+
+    int bw = (w + 3) / 4;
+    int bh = (h + 3) / 4;
+    int block_size = block_byte_size(fmt);
+
+    // Temp 4x4 block output
+    uint8_t block_out[4 * 4 * 4]; // 16 pixels × 4 bytes
+
+    for (int by = 0; by < bh; by++) {
+        for (int bx = 0; bx < bw; bx++) {
+            const uint8_t* block = src + ((size_t)by * bw + bx) * block_size;
+            memset(block_out, 255, sizeof(block_out));
+
+            switch (fmt) {
+                case TF_BC1:
+                    rgbcx::unpack_bc1(block, block_out, true);
+                    break;
+                case TF_BC3:
+                    rgbcx::unpack_bc3(block, block_out);
+                    break;
+                case TF_BC4:
+                    // BC4: single channel → R, fill G=R, B=R, A=255
+                    {
+                        uint8_t r_vals[16];
+                        rgbcx::unpack_bc4(block, r_vals, 1);
+                        for (int i = 0; i < 16; i++) {
+                            block_out[i * 4 + 0] = r_vals[i];
+                            block_out[i * 4 + 1] = r_vals[i];
+                            block_out[i * 4 + 2] = r_vals[i];
+                            block_out[i * 4 + 3] = 255;
+                        }
+                    }
+                    break;
+                case TF_BC5:
+                    // BC5: two channels → R, G, B=0, A=255
+                    {
+                        uint8_t rg_vals[16 * 4];
+                        memset(rg_vals, 0, sizeof(rg_vals));
+                        for (int i = 0; i < 16; i++) rg_vals[i * 4 + 3] = 255;
+                        rgbcx::unpack_bc5(block, rg_vals, 0, 1, 4);
+                        memcpy(block_out, rg_vals, sizeof(block_out));
+                    }
+                    break;
+                case TF_BC7:
+                    bc7decomp::unpack_bc7(block, (bc7decomp::color_rgba*)block_out);
+                    break;
+                default:
+                    break;
+            }
+
+            // Copy block pixels to output image (handling edge blocks)
+            for (int y = 0; y < 4; y++) {
+                int py = by * 4 + y;
+                if (py >= h) break;
+                for (int x = 0; x < 4; x++) {
+                    int px = bx * 4 + x;
+                    if (px >= w) break;
+                    memcpy(&rgba[(py * w + px) * 4],
+                           &block_out[(y * 4 + x) * 4], 4);
+                }
+            }
+        }
+    }
+
+    return rgba;
+}
+
+// Decompress mip 0 of a TfCompressed to RGBA. Caller must free with tf_free_buffer.
+TF_API uint8_t* tf_decompress(const TfCompressed* c, int mip, int* out_w, int* out_h) {
+    if (!c || mip < 0 || mip >= c->mip_count) return nullptr;
+
+    int mw = c->width, mh = c->height;
+    for (int i = 0; i < mip; i++) {
+        mw = (mw > 1) ? mw / 2 : 1;
+        mh = (mh > 1) ? mh / 2 : 1;
+    }
+
+    const uint8_t* src = c->data + c->mip_offsets[mip];
+    uint8_t* out = decompress_mip(src, mw, mh, (TfBCFormat)c->format);
+    if (out) {
+        if (out_w) *out_w = mw;
+        if (out_h) *out_h = mh;
+    }
+    return out;
+}
+
+// ── Quality metrics ──────────────────────────────────────────────────────────
+
+TF_API double tf_psnr(const uint8_t* original, const uint8_t* compressed,
+                       int width, int height, int channels) {
+    // channels: how many channels to compare (3 = RGB, 4 = RGBA)
+    if (!original || !compressed || width <= 0 || height <= 0) return 0.0;
+    if (channels < 1) channels = 1;
+    if (channels > 4) channels = 4;
+
+    double mse = 0.0;
+    size_t count = (size_t)width * height;
+    for (size_t i = 0; i < count; i++) {
+        for (int c = 0; c < channels; c++) {
+            double diff = (double)original[i * 4 + c] - (double)compressed[i * 4 + c];
+            mse += diff * diff;
+        }
+    }
+    mse /= (double)(count * channels);
+    if (mse < 1e-10) return 100.0; // identical
+    return 10.0 * log10(255.0 * 255.0 / mse);
+}
+
+TF_API double tf_ssim(const uint8_t* original, const uint8_t* compressed,
+                       int width, int height) {
+    // Luminance-only SSIM (standard formula)
+    if (!original || !compressed || width <= 0 || height <= 0) return 0.0;
+
+    size_t count = (size_t)width * height;
+
+    // Compute luminance for both images
+    double mean_x = 0, mean_y = 0;
+    for (size_t i = 0; i < count; i++) {
+        double lx = 0.2126 * original[i * 4] + 0.7152 * original[i * 4 + 1] + 0.0722 * original[i * 4 + 2];
+        double ly = 0.2126 * compressed[i * 4] + 0.7152 * compressed[i * 4 + 1] + 0.0722 * compressed[i * 4 + 2];
+        mean_x += lx;
+        mean_y += ly;
+    }
+    mean_x /= count;
+    mean_y /= count;
+
+    double var_x = 0, var_y = 0, cov_xy = 0;
+    for (size_t i = 0; i < count; i++) {
+        double lx = 0.2126 * original[i * 4] + 0.7152 * original[i * 4 + 1] + 0.0722 * original[i * 4 + 2];
+        double ly = 0.2126 * compressed[i * 4] + 0.7152 * compressed[i * 4 + 1] + 0.0722 * compressed[i * 4 + 2];
+        double dx = lx - mean_x;
+        double dy = ly - mean_y;
+        var_x += dx * dx;
+        var_y += dy * dy;
+        cov_xy += dx * dy;
+    }
+    var_x /= count;
+    var_y /= count;
+    cov_xy /= count;
+
+    const double C1 = 6.5025;    // (0.01*255)^2
+    const double C2 = 58.5225;   // (0.03*255)^2
+
+    double num = (2.0 * mean_x * mean_y + C1) * (2.0 * cov_xy + C2);
+    double den = (mean_x * mean_x + mean_y * mean_y + C1) * (var_x + var_y + C2);
+    return num / den;
 }
 
 // ── Utility: free a malloc'd buffer ──────────────────────────────────────────

@@ -214,6 +214,91 @@ with open("output.dds", "wb") as f:
     f.write(dds_data)
 ```
 
+#### Decompression
+
+##### `tex.to_rgba(mip=0)`
+
+Decompress a texture back to raw RGBA pixels. Works with all formats (BC1–BC7, A8R8G8B8).
+
+```python
+rgba_bytes, width, height = tex.to_rgba()      # mip 0 (full resolution)
+rgba_bytes, width, height = tex.to_rgba(mip=2)  # mip level 2 (quarter resolution)
+```
+
+##### `tex.to_pil(mip=0)`
+
+Decompress to a Pillow `Image` object. Requires Pillow.
+
+```python
+pil_image = tex.to_pil()
+pil_image.save("preview.png")
+```
+
+#### Inspection
+
+##### `Texture.inspect_dds(source)`
+
+Read DDS metadata without loading pixel data.
+
+```python
+info = Texture.inspect_dds("texture.dds")
+# {'name': 'texture', 'width': 512, 'height': 512, 'format': BCFormat.BC7,
+#  'format_name': 'BC7', 'mip_count': 10, 'data_size': 349524}
+```
+
+#### Quality Metrics
+
+##### `tex.quality_metrics(original_rgba)`
+
+Compare a compressed texture against the original RGBA pixels. Returns PSNR (dB) and SSIM.
+
+```python
+# Load original pixels
+from texfury import _native as native
+img = native.load_image("photo.png")
+original_rgba = native.image_pixels(img, native.image_width(img), native.image_height(img))
+native.free_image(img)
+
+# Compress and measure quality loss
+tex = Texture.from_image("photo.png", format=BCFormat.BC1, quality=0.5)
+metrics = tex.quality_metrics(original_rgba)
+print(f"PSNR: {metrics['psnr_rgb']:.1f} dB")   # higher = better (40+ is good)
+print(f"SSIM: {metrics['ssim']:.4f}")            # 1.0 = identical
+```
+
+#### Validation
+
+##### `tex.validate()`
+
+Check a texture for common issues. Returns a list of warning strings (empty = all good).
+
+```python
+warnings = tex.validate()
+if warnings:
+    for w in warnings:
+        print(f"WARNING: {w}")
+else:
+    print("Texture is valid")
+```
+
+Checks: dimensions, power-of-two, minimum size for BC formats, mip count, data size, max dimensions, name.
+
+---
+
+### `suggest_format(has_alpha, *, normal_map, single_channel, quality_over_size)`
+
+Auto-detect the best compression format based on image characteristics.
+
+```python
+from texfury import suggest_format, has_transparency
+
+fmt = suggest_format(
+    has_alpha=has_transparency("icon.png"),
+    quality_over_size=True,  # True → BC7, False → BC1/BC3
+)
+# Also supports: normal_map=True → BC5, single_channel=True → BC4
+```
+
 ---
 
 ### `YTDFile` — Texture Dictionary (.ytd)
@@ -232,13 +317,44 @@ ytd.save("my_vehicle.ytd")
 print(len(ytd))  # 3
 ```
 
-#### Loading and Inspecting a YTD
+#### Loading and Iterating
 
 ```python
 ytd = YTDFile.load("vehicles.ytd")
 
 for tex in ytd.textures:
     print(f"{tex.name}: {tex.width}x{tex.height} {tex.format.name} ({tex.mip_count} mips)")
+```
+
+#### Lookup, Replace, Remove
+
+```python
+ytd = YTDFile.load("vehicles.ytd")
+
+# Check if a texture exists
+if "body_d" in ytd:
+    tex = ytd.get("body_d")
+
+# List all names
+print(ytd.names())  # ['body_d', 'body_n', 'body_s']
+
+# Replace a single texture without rebuilding everything
+new_tex = Texture.from_image("new_body_d.png", format=BCFormat.BC7)
+ytd.replace("body_d", new_tex)
+ytd.save("vehicles_patched.ytd")
+
+# Remove a texture
+ytd.remove("body_s")
+```
+
+#### Inspecting Without Loading Data
+
+```python
+info = YTDFile.inspect("vehicles.ytd")
+for entry in info:
+    print(f"{entry['name']}: {entry['width']}x{entry['height']} "
+          f"{entry['format_name']} mips={entry['mip_count']} "
+          f"size={entry['data_size']} bytes")
 ```
 
 #### Extracting to DDS
@@ -383,16 +499,16 @@ print(f"{w}x{h}, {ch} channels")  # e.g. 1920x1080, 4 channels
 
 ## Examples
 
-### Auto-detect format based on transparency
+### Auto-detect format with suggest_format
 
 ```python
-from texfury import Texture, BCFormat, has_transparency
+from texfury import Texture, suggest_format, has_transparency
 
 def smart_compress(path, quality=0.8):
-    fmt = BCFormat.BC3 if has_transparency(path) else BCFormat.BC1
+    fmt = suggest_format(has_transparency(path))
     return Texture.from_image(path, format=fmt, quality=quality)
 
-tex = smart_compress("my_texture.png")
+tex = smart_compress("my_texture.png")  # BC7 if alpha, BC7 if opaque (quality mode)
 tex.save_dds("my_texture.dds")
 ```
 

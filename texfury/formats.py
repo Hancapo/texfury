@@ -107,6 +107,31 @@ def total_mip_data_size(width: int, height: int, fmt: BCFormat, levels: int) -> 
     return total
 
 
+def suggest_format(has_alpha: bool, *, normal_map: bool = False,
+                   single_channel: bool = False,
+                   quality_over_size: bool = True) -> BCFormat:
+    """Suggest the best BCFormat based on image characteristics.
+
+    Parameters
+    ----------
+    has_alpha : bool
+        Whether the image has meaningful transparency.
+    normal_map : bool
+        True if this is a normal map.
+    single_channel : bool
+        True if only one channel is meaningful (grayscale/height).
+    quality_over_size : bool
+        True prefers BC7 (better quality), False prefers BC1/BC3 (smaller).
+    """
+    if normal_map:
+        return BCFormat.BC5
+    if single_channel:
+        return BCFormat.BC4
+    if has_alpha:
+        return BCFormat.BC7 if quality_over_size else BCFormat.BC3
+    return BCFormat.BC7 if quality_over_size else BCFormat.BC1
+
+
 def row_pitch(width: int, fmt: BCFormat) -> int:
     """Bytes per row (of blocks for BC, of pixels for uncompressed)."""
     if fmt == BCFormat.A8R8G8B8:

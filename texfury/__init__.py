@@ -1,6 +1,6 @@
-"""texfury — Fast image-to-DDS conversion and GTA V YTD texture dictionaries."""
+"""texfury — Fast image-to-DDS conversion and YTD texture dictionaries."""
 
-from texfury.formats import BCFormat, MipFilter
+from texfury.formats import BCFormat, MipFilter, suggest_format
 from texfury.texture import Texture
 from texfury.ytd import (
     YTDFile,
@@ -16,11 +16,12 @@ from texfury.utils import (
     image_dimensions,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "BCFormat",
     "MipFilter",
+    "suggest_format",
     "Texture",
     "YTDFile",
     "create_ytd_from_folder",

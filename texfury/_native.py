@@ -131,6 +131,19 @@ _lib.tf_save_dds_memory.restype = ctypes.c_int32
 _lib.tf_load_dds.argtypes = [ctypes.c_wchar_p]
 _lib.tf_load_dds.restype = TfCompressed
 
+# Decompression
+_lib.tf_decompress.argtypes = [TfCompressed, ctypes.c_int,
+                                ctypes.POINTER(ctypes.c_int),
+                                ctypes.POINTER(ctypes.c_int)]
+_lib.tf_decompress.restype = ctypes.c_void_p
+
+# Quality metrics
+_lib.tf_psnr.argtypes = [c_uint8_p, c_uint8_p, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+_lib.tf_psnr.restype = ctypes.c_double
+
+_lib.tf_ssim.argtypes = [c_uint8_p, c_uint8_p, ctypes.c_int, ctypes.c_int]
+_lib.tf_ssim.restype = ctypes.c_double
+
 # Cleanup
 _lib.tf_free_buffer.argtypes = [ctypes.c_void_p]
 _lib.tf_free_buffer.restype = None
@@ -210,6 +223,9 @@ def compressed_data(c: TfCompressed) -> bytes:
     sz = _lib.tf_compressed_size(c)
     return ctypes.string_at(ptr, sz)
 
+def compressed_size(c: TfCompressed) -> int:
+    return _lib.tf_compressed_size(c)
+
 def compressed_width(c: TfCompressed) -> int:
     return _lib.tf_compressed_width(c)
 
@@ -248,3 +264,28 @@ def load_dds(path: str) -> TfCompressed:
     if not c:
         raise FileNotFoundError(f"Failed to load DDS: {path}")
     return c
+
+def decompress(c: TfCompressed, mip: int = 0) -> tuple[bytes, int, int]:
+    """Decompress a mip level to RGBA bytes. Returns (rgba_bytes, width, height)."""
+    out_w = ctypes.c_int(0)
+    out_h = ctypes.c_int(0)
+    ptr = _lib.tf_decompress(c, mip, ctypes.byref(out_w), ctypes.byref(out_h))
+    if not ptr:
+        raise RuntimeError(f"Failed to decompress mip {mip}")
+    w, h = out_w.value, out_h.value
+    data = ctypes.string_at(ptr, w * h * 4)
+    _lib.tf_free_buffer(ptr)
+    return data, w, h
+
+def psnr(original: bytes, compressed: bytes, width: int, height: int,
+         channels: int = 3) -> float:
+    """Calculate PSNR between two RGBA images."""
+    buf_a = (ctypes.c_uint8 * len(original)).from_buffer_copy(original)
+    buf_b = (ctypes.c_uint8 * len(compressed)).from_buffer_copy(compressed)
+    return _lib.tf_psnr(buf_a, buf_b, width, height, channels)
+
+def ssim(original: bytes, compressed: bytes, width: int, height: int) -> float:
+    """Calculate luminance SSIM between two RGBA images."""
+    buf_a = (ctypes.c_uint8 * len(original)).from_buffer_copy(original)
+    buf_b = (ctypes.c_uint8 * len(compressed)).from_buffer_copy(compressed)
+    return _lib.tf_ssim(buf_a, buf_b, width, height)

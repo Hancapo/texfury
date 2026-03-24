@@ -4,15 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "texfury"
-version = "1.0.0"
-description = "Fast image-to-DDS conversion and GTA V YTD texture dictionaries"
+version = "1.1.0"
+description = "Fast image-to-DDS conversion and YTD texture dictionary toolkit"
 requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "MIT"}
+authors = [{name = "Hancapo"}]
+keywords = ["dds", "texture", "bc7", "compression", "ytd", "mipmap"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
 dependencies = []
 
 [project.optional-dependencies]
 pil = ["Pillow"]
+
+[project.urls]
+Repository = "https://github.com/Hancapo/texfury"
 
 [tool.setuptools.packages.find]
 include = ["texfury*"]

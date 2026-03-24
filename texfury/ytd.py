@@ -70,6 +70,38 @@ class YTDFile:
             raise ValueError("Texture must have a name before adding to YTD")
         self._textures.append(texture)
 
+    def replace(self, name: str, texture: Texture) -> None:
+        """Replace a texture by name. Raises KeyError if not found."""
+        lower = name.lower()
+        for i, t in enumerate(self._textures):
+            if t.name.lower() == lower:
+                if texture.name != t.name:
+                    texture.name = t.name
+                self._textures[i] = texture
+                return
+        raise KeyError(f"Texture '{name}' not found in YTD")
+
+    def remove(self, name: str) -> None:
+        """Remove a texture by name. Raises KeyError if not found."""
+        lower = name.lower()
+        for i, t in enumerate(self._textures):
+            if t.name.lower() == lower:
+                self._textures.pop(i)
+                return
+        raise KeyError(f"Texture '{name}' not found in YTD")
+
+    def get(self, name: str) -> Texture:
+        """Get a texture by name. Raises KeyError if not found."""
+        lower = name.lower()
+        for t in self._textures:
+            if t.name.lower() == lower:
+                return t
+        raise KeyError(f"Texture '{name}' not found in YTD")
+
+    def names(self) -> list[str]:
+        """Return the names of all textures."""
+        return [t.name for t in self._textures]
+
     def save(self, path: str | Path) -> None:
         """Build and write the YTD to a file."""
         data = _build_ytd(self._textures)
@@ -80,8 +112,20 @@ class YTDFile:
         """Read a YTD file and extract its textures."""
         return _parse_ytd(Path(path).read_bytes())
 
+    @staticmethod
+    def inspect(path: str | Path) -> list[dict]:
+        """Read texture metadata from a YTD without loading pixel data.
+
+        Returns a list of dicts with keys: name, width, height, format, mip_count, data_size.
+        """
+        return _inspect_ytd(Path(path).read_bytes())
+
     def __len__(self) -> int:
         return len(self._textures)
+
+    def __contains__(self, name: str) -> bool:
+        lower = name.lower()
+        return any(t.name.lower() == lower for t in self._textures)
 
     def __repr__(self) -> str:
         names = [t.name for t in self._textures]
@@ -450,3 +494,50 @@ def _parse_ytd(file_data: bytes) -> YTDFile:
         ytd.add(tex)
 
     return ytd
+
+
+def _inspect_ytd(file_data: bytes) -> list[dict]:
+    """Extract metadata from a YTD without loading pixel data."""
+    virtual_data, _ = decompress_rsc7(file_data)
+
+    count = _r_u16(virtual_data, 0x28)
+    items_ptr = _r_u64(virtual_data, 0x30)
+    items_off = _v2o(items_ptr)
+
+    result = []
+    for i in range(count):
+        tex_ptr = _r_u64(virtual_data, items_off + 8 * i)
+        tex_off = _v2o(tex_ptr)
+
+        name_ptr = _r_u64(virtual_data, tex_off + 0x28)
+        width = _r_i16(virtual_data, tex_off + 0x50)
+        height = _r_i16(virtual_data, tex_off + 0x52)
+        format_val = _r_u32(virtual_data, tex_off + 0x58)
+        mip_levels = _r_u8(virtual_data, tex_off + 0x5D)
+
+        name_off = _v2o(name_ptr)
+        name_end = virtual_data.index(b"\x00", name_off)
+        name = virtual_data[name_off:name_end].decode("utf-8", errors="replace")
+
+        if format_val in DX9_TO_BC:
+            fmt = DX9_TO_BC[format_val]
+        elif format_val in FOURCC_TO_BC:
+            fmt = FOURCC_TO_BC[format_val]
+        elif format_val in DXGI_TO_BC:
+            fmt = DXGI_TO_BC[format_val]
+        else:
+            fmt = None
+
+        data_size = total_mip_data_size(width, height, fmt, mip_levels) if fmt is not None else 0
+
+        result.append({
+            "name": name,
+            "width": width,
+            "height": height,
+            "format": fmt,
+            "format_name": fmt.name if fmt is not None else f"unknown(0x{format_val:08X})",
+            "mip_count": mip_levels,
+            "data_size": data_size,
+        })
+
+    return result

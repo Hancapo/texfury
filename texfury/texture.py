@@ -179,6 +179,28 @@ class Texture:
         finally:
             native.free_compressed(c)
 
+    @staticmethod
+    def inspect_dds(source: str | Path) -> dict:
+        """Read DDS metadata without loading pixel data.
+
+        Returns dict with keys: width, height, format, format_name, mip_count, data_size.
+        """
+        path = Path(source)
+        c = native.load_dds(str(path.resolve()))
+        try:
+            fmt = BCFormat(native.compressed_format(c))
+            return {
+                "name": path.stem.lower(),
+                "width": native.compressed_width(c),
+                "height": native.compressed_height(c),
+                "format": fmt,
+                "format_name": fmt.name,
+                "mip_count": native.compressed_mip_count(c),
+                "data_size": native.compressed_size(c),
+            }
+        finally:
+            native.free_compressed(c)
+
     @classmethod
     def from_raw(cls, data: bytes, width: int, height: int,
                  fmt: BCFormat, mip_count: int,
@@ -199,7 +221,106 @@ class Texture:
         return _build_dds_bytes(self._width, self._height, self._format,
                                 self._mip_count, self._mip_sizes, self._data)
 
+    def to_rgba(self, mip: int = 0) -> tuple[bytes, int, int]:
+        """Decompress to raw RGBA pixels.
+
+        Returns (rgba_bytes, width, height) for the given mip level.
+        """
+        c = self._to_compressed_handle()
+        try:
+            return native.decompress(c, mip)
+        finally:
+            native.free_compressed(c)
+
+    def to_pil(self, mip: int = 0):
+        """Decompress to a Pillow Image. Requires Pillow.
+
+        Returns a PIL.Image.Image in RGBA mode.
+        """
+        if not _HAS_PIL:
+            raise ImportError("Pillow is required for to_pil(). "
+                              "Install it with: pip install Pillow")
+        rgba, w, h = self.to_rgba(mip)
+        return PILImage.frombytes("RGBA", (w, h), rgba)
+
+    def quality_metrics(self, original_rgba: bytes) -> dict:
+        """Compare this texture against original RGBA pixels.
+
+        Parameters
+        ----------
+        original_rgba : bytes
+            Original uncompressed RGBA pixel data (same dimensions as mip 0).
+
+        Returns
+        -------
+        dict with keys: psnr_rgb, psnr_rgba, ssim
+        """
+        decompressed, w, h = self.to_rgba(0)
+        return {
+            "psnr_rgb": native.psnr(original_rgba, decompressed, w, h, 3),
+            "psnr_rgba": native.psnr(original_rgba, decompressed, w, h, 4),
+            "ssim": native.ssim(original_rgba, decompressed, w, h),
+        }
+
+    def validate(self) -> list[str]:
+        """Check texture for common issues.
+
+        Returns a list of warning strings. Empty list means everything is OK.
+        """
+        warnings = []
+        w, h = self._width, self._height
+
+        if w <= 0 or h <= 0:
+            warnings.append(f"Invalid dimensions: {w}x{h}")
+
+        if w & (w - 1) != 0 or h & (h - 1) != 0:
+            warnings.append(f"Non-power-of-two dimensions: {w}x{h}")
+
+        if is_block_compressed(self._format):
+            if w < 4 or h < 4:
+                warnings.append(
+                    f"Dimensions {w}x{h} below minimum 4x4 for "
+                    f"{self._format.name}")
+
+        if self._mip_count < 1:
+            warnings.append("No mip levels")
+
+        from texfury.formats import total_mip_data_size
+        expected = total_mip_data_size(w, h, self._format, self._mip_count)
+        actual = len(self._data)
+        if actual != expected:
+            warnings.append(
+                f"Data size mismatch: expected {expected} bytes, "
+                f"got {actual} bytes")
+
+        if w > 16384 or h > 16384:
+            warnings.append(f"Dimensions {w}x{h} exceed 16384 max")
+
+        if not self._name:
+            warnings.append("Texture has no name")
+
+        return warnings
+
     # ── Internal ──────────────────────────────────────────────────────────
+
+    def _to_compressed_handle(self):
+        """Build a native TfCompressed handle from this texture's data."""
+        import ctypes
+        # We need to pass the data to the native layer. Create a TfCompressed
+        # by saving to DDS and loading back (roundtrip via memory).
+        dds = self.to_dds_bytes()
+        # Write to temp file and load
+        import tempfile, os
+        fd, tmp = tempfile.mkstemp(suffix=".dds")
+        try:
+            os.write(fd, dds)
+            os.close(fd)
+            return native.load_dds(tmp)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     @classmethod
     def _compress_image(cls, img, *, format: BCFormat, quality: float,
