@@ -111,12 +111,13 @@ class Texture:
         if not name:
             name = path.stem.lower()
 
-        # TIFF not supported by stb_image — route through Pillow
-        if path.suffix.lower() in (".tif", ".tiff"):
+        # Try native loader first (stb_image: PNG, JPG, TGA, BMP, PSD, WebP, etc.)
+        # If it fails, fall back to Pillow for formats stb doesn't support (TIFF, etc.)
+        try:
+            img = native.load_image(str(path.resolve()))
+        except OSError:
             if not _HAS_PIL:
-                raise ImportError(
-                    "Pillow is required for TIFF support. "
-                    "Install it with: pip install Pillow")
+                raise
             return cls.from_pil(PILImage.open(path), format=format,
                                 quality=quality,
                                 generate_mipmaps=generate_mipmaps,
@@ -125,7 +126,6 @@ class Texture:
                                 mip_filter=mip_filter,
                                 name=name)
 
-        img = native.load_image(str(path.resolve()))
         try:
             return cls._compress_image(img, format=format, quality=quality,
                                         generate_mipmaps=generate_mipmaps,
