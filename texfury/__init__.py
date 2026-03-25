@@ -3,7 +3,8 @@
 from texfury.formats import BCFormat, MipFilter, suggest_format
 from texfury.texture import Texture
 from texfury.ytd import (
-    YTDFile,
+    Game,
+    ITD,
     create_ytd_from_folder,
     batch_convert,
     extract_ytd,
@@ -16,14 +17,15 @@ from texfury.utils import (
     image_dimensions,
 )
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "BCFormat",
     "MipFilter",
     "suggest_format",
     "Texture",
-    "YTDFile",
+    "Game",
+    "ITD",
     "create_ytd_from_folder",
     "batch_convert",
     "extract_ytd",

@@ -132,6 +132,27 @@ def suggest_format(has_alpha: bool, *, normal_map: bool = False,
     return BCFormat.BC7 if quality_over_size else BCFormat.BC1
 
 
+# RSC8 texture format codes (DXGI-like byte values, used in RDR2 YTD)
+class Rsc8TextureFormat(IntEnum):
+    BC1_UNORM = 0x47
+    BC3_UNORM = 0x4D
+    BC4_UNORM = 0x50
+    BC5_UNORM = 0x53
+    BC7_UNORM = 0x62
+    B8G8R8A8_UNORM = 0x57
+
+BC_TO_RSC8: dict[BCFormat, int] = {
+    BCFormat.BC1: Rsc8TextureFormat.BC1_UNORM,
+    BCFormat.BC3: Rsc8TextureFormat.BC3_UNORM,
+    BCFormat.BC4: Rsc8TextureFormat.BC4_UNORM,
+    BCFormat.BC5: Rsc8TextureFormat.BC5_UNORM,
+    BCFormat.BC7: Rsc8TextureFormat.BC7_UNORM,
+    BCFormat.A8R8G8B8: Rsc8TextureFormat.B8G8R8A8_UNORM,
+}
+
+RSC8_TO_BC: dict[int, BCFormat] = {v: k for k, v in BC_TO_RSC8.items()}
+
+
 def row_pitch(width: int, fmt: BCFormat) -> int:
     """Bytes per row (of blocks for BC, of pixels for uncompressed)."""
     if fmt == BCFormat.A8R8G8B8:

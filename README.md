@@ -9,7 +9,7 @@ Built on **bc7enc_rdo** + **ISPC bc7e** for high-quality BC1/BC3/BC4/BC5/BC7 com
 - **BC1, BC3, BC4, BC5, BC7** block compression with adjustable quality (0.0–1.0)
 - **A8R8G8B8** uncompressed 32-bit BGRA format
 - **DDS** file read/write (legacy + DX10 extended headers)
-- **YTD** texture dictionary creation and extraction
+- **YTD** texture dictionary creation and extraction (GTA V and RDR2)
 - **Mipmap generation** with configurable minimum size
 - **Automatic power-of-two resize** (sRGB-aware via stb_image_resize2)
 - **Transparency detection** without manual pixel iteration
@@ -19,22 +19,11 @@ Built on **bc7enc_rdo** + **ISPC bc7e** for high-quality BC1/BC3/BC4/BC5/BC7 com
 
 ## Installation
 
-Copy the `texfury/` package directory into your project (or add it to `PYTHONPATH`). The pre-compiled `texfury_native.dll` is included.
-
-```
-your_project/
-    texfury/
-        __init__.py
-        _native.py
-        formats.py
-        texture.py
-        ytd.py
-        utils.py
-        resource.py
-        texfury_native.dll
+```bash
+pip install texfury
 ```
 
-> **Pillow** is optional. Install it (`pip install Pillow`) only if you want to use `Texture.from_pil()` or `has_transparency_pil()`.
+> **Pillow** is optional. Install it (`pip install Pillow`) only if you want to use `Texture.from_pil()`, `Texture.to_pil()`, or `has_transparency_pil()`.
 
 ---
 
@@ -62,12 +51,27 @@ create_ytd_from_folder(
 )
 ```
 
+### Create a RDR2 YTD
+
+```python
+from texfury import create_ytd_from_folder, BCFormat, Game
+
+create_ytd_from_folder(
+    "my_textures/",
+    "output.ytd",
+    game=Game.RDR2,
+    format=BCFormat.BC7,
+    quality=0.8,
+)
+```
+
 ### Extract textures from a YTD
 
 ```python
 from texfury import extract_ytd
 
 extract_ytd("vehicles.ytd", "extracted/")
+# Auto-detects GTA V or RDR2 format
 # Creates extracted/texture_name.dds for each texture
 ```
 
@@ -301,26 +305,51 @@ fmt = suggest_format(
 
 ---
 
-### `YTDFile` — Texture Dictionary (.ytd)
+### `Game` — Target Game
+
+```python
+from texfury import Game
+```
+
+| Value | Description |
+|-------|-------------|
+| `Game.GTAV_LEGACY` | GTA V (original / Legacy edition). **Default.** |
+| `Game.GTAV_ENHANCED` | GTA V Enhanced edition. *(not yet supported)* |
+| `Game.RDR2` | Red Dead Redemption 2. |
+
+The `Game` enum controls which binary format is used when building YTD files (RSC7 for GTA V, RSC8 for RDR2). When loading or inspecting a YTD, the game is auto-detected from the file header.
+
+---
+
+### `ITD` — Internal Texture Dictionary (.ytd)
+
+`ITD` is the unified class for reading and writing texture dictionaries across supported RAGE games.
 
 #### Building a YTD
 
 ```python
-from texfury import YTDFile, Texture, BCFormat
+from texfury import ITD, Texture, BCFormat, Game
 
-ytd = YTDFile()
+# GTA V (default)
+ytd = ITD()
 ytd.add(Texture.from_image("diffuse.png", format=BCFormat.BC7))
 ytd.add(Texture.from_image("normal.png", format=BCFormat.BC5))
-ytd.add(Texture.from_image("specular.png", format=BCFormat.BC1))
 ytd.save("my_vehicle.ytd")
 
-print(len(ytd))  # 3
+# RDR2
+ytd = ITD(game=Game.RDR2)
+ytd.add(Texture.from_image("diffuse.png", format=BCFormat.BC7))
+ytd.save("my_rdr2_vehicle.ytd")
+
+print(len(ytd))       # number of textures
+print(ytd.game)        # Game.GTAV_LEGACY or Game.RDR2
 ```
 
 #### Loading and Iterating
 
 ```python
-ytd = YTDFile.load("vehicles.ytd")
+ytd = ITD.load("vehicles.ytd")  # auto-detects GTA V or RDR2
+print(ytd.game)  # Game.GTAV_LEGACY or Game.RDR2
 
 for tex in ytd.textures:
     print(f"{tex.name}: {tex.width}x{tex.height} {tex.format.name} ({tex.mip_count} mips)")
@@ -329,7 +358,7 @@ for tex in ytd.textures:
 #### Lookup, Replace, Remove
 
 ```python
-ytd = YTDFile.load("vehicles.ytd")
+ytd = ITD.load("vehicles.ytd")
 
 # Check if a texture exists
 if "body_d" in ytd:
@@ -350,7 +379,7 @@ ytd.remove("body_s")
 #### Inspecting Without Loading Data
 
 ```python
-info = YTDFile.inspect("vehicles.ytd")
+info = ITD.inspect("vehicles.ytd")  # auto-detects game
 for entry in info:
     print(f"{entry['name']}: {entry['width']}x{entry['height']} "
           f"{entry['format_name']} mips={entry['mip_count']} "
@@ -360,7 +389,7 @@ for entry in info:
 #### Extracting to DDS
 
 ```python
-ytd = YTDFile.load("props.ytd")
+ytd = ITD.load("props.ytd")
 for tex in ytd.textures:
     tex.save_dds(f"extracted/{tex.name}.dds")
 ```
@@ -371,16 +400,17 @@ for tex in ytd.textures:
 
 ### Convenience Functions
 
-#### `create_ytd_from_folder(folder, output, *, format, quality, generate_mipmaps, min_mip_size, mip_filter, on_progress)`
+#### `create_ytd_from_folder(folder, output, *, game, format, quality, generate_mipmaps, min_mip_size, mip_filter, on_progress)`
 
 Convert all images in a folder into a single YTD file. Also picks up `.dds` files.
 
 ```python
-from texfury import create_ytd_from_folder, BCFormat
+from texfury import create_ytd_from_folder, BCFormat, Game
 
 path = create_ytd_from_folder(
     "textures/",
     "output.ytd",
+    game=Game.RDR2,        # default: Game.GTAV_LEGACY
     format=BCFormat.BC7,
     quality=0.8,
     on_progress=lambda i, total, name: print(f"[{i}/{total}] {name}"),
@@ -392,6 +422,7 @@ print(f"Created: {path}")
 |-----------|---------|-------------|
 | `folder` | — | Directory with image files |
 | `output` | `<folder>.ytd` | Output path |
+| `game` | `GTAV_LEGACY` | Target game (`Game.GTAV_LEGACY` or `Game.RDR2`) |
 | `format` | `BC7` | Compression format for all textures |
 | `quality` | `0.7` | Compression quality 0.0–1.0 |
 | `generate_mipmaps` | `True` | Generate mipmap chain |
@@ -419,7 +450,7 @@ Parameters are the same as `create_ytd_from_folder`, except `output_dir` default
 
 #### `extract_ytd(ytd_path, output_dir)`
 
-Extract all textures from a YTD into DDS files.
+Extract all textures from a YTD into DDS files. Auto-detects GTA V or RDR2 format.
 
 ```python
 from texfury import extract_ytd
@@ -529,9 +560,9 @@ tex.save_dds("composited.dds")
 ### Build a YTD with mixed formats
 
 ```python
-from texfury import YTDFile, Texture, BCFormat
+from texfury import ITD, Texture, BCFormat
 
-ytd = YTDFile()
+ytd = ITD()
 
 # Opaque diffuse — BC1 is fine, smallest size
 ytd.add(Texture.from_image("body_d.png", format=BCFormat.BC1, quality=0.7))
@@ -571,7 +602,7 @@ if pbar:
 ### Re-pack an existing YTD with different compression
 
 ```python
-from texfury import YTDFile, extract_ytd, create_ytd_from_folder
+from texfury import ITD, extract_ytd, create_ytd_from_folder
 
 # Extract original
 extract_ytd("original.ytd", "temp_textures/")
