@@ -15,7 +15,7 @@ from texfury.formats import (
 )
 from texfury.resource import (
     DAT_VIRTUAL_BASE, DAT_PHYSICAL_BASE,
-    RSC7_MAGIC, build_rsc7, decompress_rsc7,
+    RSC7_MAGIC, build_rsc7, decompress_rsc7, parse_rsc7_header,
 )
 from texfury.rsc8 import RSC8_MAGIC, build_rsc8, decompress_rsc8
 from texfury.texture import Texture
@@ -59,11 +59,14 @@ def _p2o(addr: int) -> int: return addr - DAT_PHYSICAL_BASE
 
 
 def _detect_game(file_data: bytes) -> Game:
-    """Detect game from the RSC magic bytes."""
-    if len(file_data) < 4:
+    """Detect game from the RSC magic bytes and version."""
+    if len(file_data) < 16:
         raise ValueError("File too short to detect format")
     magic = struct.unpack_from("<I", file_data, 0)[0]
     if magic == RSC7_MAGIC:
+        version = struct.unpack_from("<I", file_data, 4)[0]
+        if version == 5:
+            return Game.GTAV_ENHANCED
         return Game.GTAV_LEGACY
     if magic == RSC8_MAGIC:
         return Game.RDR2
@@ -92,6 +95,53 @@ def _read_name(virtual_data: bytes, name_ptr: int) -> str:
     return virtual_data[name_off:name_end].decode("utf-8", errors="replace")
 
 
+def _block_stride(fmt: BCFormat) -> int:
+    """Block stride in bytes. Used by RDR2 and GTA V Enhanced."""
+    if fmt in (BCFormat.BC1, BCFormat.BC4):
+        return 8
+    if fmt in (BCFormat.BC3, BCFormat.BC5, BCFormat.BC7):
+        return 16
+    return 4  # A8R8G8B8 / uncompressed
+
+
+def _block_count(fmt: BCFormat, w: int, h: int, depth: int, mips: int,
+                 *, align: int | None = None) -> int:
+    """Total block count across all mip levels.
+
+    Parameters
+    ----------
+    align : int or None
+        Block alignment per axis.  ``None`` (default) uses RDR2-style
+        alignment (16 for stride==1, else 8).  Pass ``1`` for GTA V
+        Enhanced which has no alignment padding.
+    """
+    bs = _block_stride(fmt)
+    bp = 4 if is_block_compressed(fmt) else 1
+
+    bw, bh = w, h
+    if mips > 1:
+        bw = 1
+        while bw < w:
+            bw *= 2
+        bh = 1
+        while bh < h:
+            bh *= 2
+
+    if align is None:
+        align = 16 if bs == 1 else 8
+    bc = 0
+    for _ in range(mips):
+        bx = max(1, (bw + bp - 1) // bp)
+        by = max(1, (bh + bp - 1) // bp)
+        bx += (align - (bx % align)) % align
+        by += (align - (by % align)) % align
+        bc += bx * by * depth
+        bw //= 2
+        bh //= 2
+
+    return bc
+
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff",
                     ".tif", ".webp", ".psd", ".gif", ".hdr"}
 
@@ -99,17 +149,18 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff",
 # ── ITD ──────────────────────────────────────────────────────────────────
 
 class ITD:
-    """Texture dictionary (.ytd) file — supports GTA V (RSC7) and RDR2 (RSC8).
+    """Internal Texture Dictionary — generic abstraction over RAGE texture
+    dictionary formats: .ytd (x64) and .wtd (x32) in the future.
 
     Usage:
-        ytd = ITD()                          # GTA V by default
+        ytd = ITD()                          # GTA V Legacy by default
+        ytd = ITD(game=Game.GTAV_ENHANCED)   # GTA V Enhanced
         ytd = ITD(game=Game.RDR2)            # RDR2
 
         ytd.add(Texture.from_image("logo.png"))
         ytd.save("output.ytd")
 
         ytd = ITD.load("existing.ytd")       # auto-detects game
-        print(ytd.game)                           # Game.GTAV_LEGACY or Game.RDR2
     """
 
     __slots__ = ("_textures", "_game")
@@ -167,8 +218,8 @@ class ITD:
     def save(self, path: str | Path) -> None:
         """Build and write the YTD to a file."""
         if self._game == Game.GTAV_ENHANCED:
-            raise NotImplementedError("GTA V Enhanced edition is not yet supported")
-        if self._game == Game.RDR2:
+            data = _build_enhanced(self._textures)
+        elif self._game == Game.RDR2:
             data = _build_rdr2(self._textures)
         else:
             data = _build_gtav(self._textures)
@@ -176,11 +227,13 @@ class ITD:
 
     @staticmethod
     def load(path: str | Path) -> ITD:
-        """Read a YTD file — auto-detects GTA V or RDR2."""
+        """Read a YTD file — auto-detects GTA V (Legacy/Enhanced) or RDR2."""
         file_data = Path(path).read_bytes()
         game = _detect_game(file_data)
         if game == Game.RDR2:
             return _parse_rdr2(file_data)
+        if game == Game.GTAV_ENHANCED:
+            return _parse_enhanced(file_data)
         return _parse_gtav(file_data)
 
     @staticmethod
@@ -190,6 +243,8 @@ class ITD:
         game = _detect_game(file_data)
         if game == Game.RDR2:
             return _inspect_rdr2(file_data)
+        if game == Game.GTAV_ENHANCED:
+            return _inspect_enhanced(file_data)
         return _inspect_gtav(file_data)
 
     def __len__(self) -> int:
@@ -534,41 +589,6 @@ _RDR2_DIM_2D         = 1
 _RDR2_SRV_DIM_2D     = 0x0401
 
 
-def _rsc8_block_stride(fmt: BCFormat) -> int:
-    if fmt in (BCFormat.BC1, BCFormat.BC4):
-        return 8
-    if fmt in (BCFormat.BC3, BCFormat.BC5, BCFormat.BC7):
-        return 16
-    return 4  # A8R8G8B8 / uncompressed
-
-
-def _rsc8_block_count(fmt: BCFormat, w: int, h: int, depth: int, mips: int) -> int:
-    bs = _rsc8_block_stride(fmt)
-    bp = 4 if is_block_compressed(fmt) else 1
-
-    bw, bh = w, h
-    if mips > 1:
-        bw = 1
-        while bw < w:
-            bw *= 2
-        bh = 1
-        while bh < h:
-            bh *= 2
-
-    align = 16 if bs == 1 else 8
-    bc = 0
-    for _ in range(mips):
-        bx = max(1, (bw + bp - 1) // bp)
-        by = max(1, (bh + bp - 1) // bp)
-        bx += (align - (bx % align)) % align
-        by += (align - (by % align)) % align
-        bc += bx * by * depth
-        bw //= 2
-        bh //= 2
-
-    return bc
-
-
 def _build_rdr2(textures: list[Texture]) -> bytes:
     entries = sorted(textures, key=lambda t: _joaat(t.name))
     n = len(entries)
@@ -601,8 +621,8 @@ def _build_rdr2(textures: list[Texture]) -> bytes:
     phys_cur = 0
     for e in entries:
         phys_offsets.append(phys_cur)
-        bc = _rsc8_block_count(e.format, e.width, e.height, 1, e.mip_count)
-        target = bc * _rsc8_block_stride(e.format)
+        bc = _block_count(e.format, e.width, e.height, 1, e.mip_count)
+        target = bc * _block_stride(e.format)
         data = e.data if len(e.data) >= target else e.data + b"\x00" * (target - len(e.data))
         phys_data_list.append(data)
         phys_cur = _align(phys_cur + len(data), 16)
@@ -642,8 +662,8 @@ def _build_rdr2(textures: list[Texture]) -> bytes:
     # Texture blocks (176 bytes each)
     for i, e in enumerate(entries):
         off = tex_off_base + _RDR2_TEX_SIZE * i
-        bc = _rsc8_block_count(e.format, e.width, e.height, 1, e.mip_count)
-        bs = _rsc8_block_stride(e.format)
+        bc = _block_count(e.format, e.width, e.height, 1, e.mip_count)
+        bs = _block_stride(e.format)
 
         # TextureBase (0x00–0x4F)
         struct.pack_into("<Q", vbuf, off + 0x00, _RDR2_TEX_VFT)
@@ -720,6 +740,197 @@ def _parse_rdr2(file_data: bytes) -> ITD:
 
 def _inspect_rdr2(file_data: bytes) -> list[dict]:
     virtual_data, _ = decompress_rsc8(file_data)
+
+    count = _r_u16(virtual_data, 0x28)
+    items_off = _v2o(_r_u64(virtual_data, 0x30))
+
+    result = []
+    for i in range(count):
+        tex_off = _v2o(_r_u64(virtual_data, items_off + 8 * i))
+
+        name = _read_name(virtual_data, _r_u64(virtual_data, tex_off + 0x28))
+        width = _r_u16(virtual_data, tex_off + 0x18)
+        height = _r_u16(virtual_data, tex_off + 0x1A)
+        format_byte = _r_u8(virtual_data, tex_off + 0x1F)
+        mip_levels = _r_u8(virtual_data, tex_off + 0x22)
+
+        fmt = RSC8_TO_BC.get(format_byte)
+        data_size = total_mip_data_size(width, height, fmt, mip_levels) if fmt is not None else 0
+
+        result.append({
+            "name": name, "width": width, "height": height,
+            "format": fmt,
+            "format_name": fmt.name if fmt is not None else f"unknown(0x{format_byte:02X})",
+            "mip_count": mip_levels, "data_size": data_size,
+        })
+
+    return result
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GTA V Enhanced / gen9 (RSC7 version 5) internals
+# ═════════════════════════════════════════════════════════════════════════════
+
+_ENHANCED_TEX_SIZE   = 0x80  # 128 bytes
+_ENHANCED_FLAGS      = 0x00260208
+_ENHANCED_TILE_AUTO  = 255
+_ENHANCED_UNK_23H    = 0x28
+_ENHANCED_UNK_44H    = 2
+_ENHANCED_DIM_2D     = 1
+_ENHANCED_SRV_VFT    = 0x00000001406B77D8
+_ENHANCED_SRV_DIM_2D = 0x41
+_RSC7_VERSION_GEN9   = 5
+
+
+def _build_enhanced(textures: list[Texture]) -> bytes:
+    entries = sorted(textures, key=lambda t: _joaat(t.name))
+    n = len(entries)
+    if n == 0:
+        raise ValueError("Cannot create YTD with zero textures")
+
+    # Virtual layout (same dictionary header as legacy)
+    dict_size = 0x40
+    keys_offset = dict_size
+    ptrs_offset = _align(keys_offset + 4 * n, 16)
+    textures_offset = _align(ptrs_offset + 8 * n, 16)
+
+    cur = textures_offset + _ENHANCED_TEX_SIZE * n
+    name_offsets: list[int] = []
+    name_bytes_list: list[bytes] = []
+    for e in entries:
+        name_offsets.append(cur)
+        encoded = e.name.encode("utf-8") + b"\x00"
+        name_bytes_list.append(encoded)
+        cur += len(encoded)
+
+    pagemap_offset = _align(cur, 16)
+    virtual_size = pagemap_offset + 0x10
+
+    # Physical layout — gen9 uses align=1 (no block padding)
+    phys_offsets: list[int] = []
+    phys_data_list: list[bytes] = []
+    phys_cur = 0
+    for e in entries:
+        phys_offsets.append(phys_cur)
+        bc = _block_count(e.format, e.width, e.height, 1, e.mip_count, align=1)
+        target = bc * _block_stride(e.format)
+        data = e.data if len(e.data) >= target else e.data + b"\x00" * (target - len(e.data))
+        phys_data_list.append(data)
+        phys_cur = _align(phys_cur + len(data), 16)
+
+    physical_size = phys_cur
+
+    # Build virtual buffer
+    vbuf = bytearray(virtual_size)
+
+    # Dictionary root (64 bytes)
+    struct.pack_into("<Q", vbuf, 0x00, 0)  # VFT = 0
+    struct.pack_into("<Q", vbuf, 0x08, DAT_VIRTUAL_BASE + pagemap_offset)
+    struct.pack_into("<Q", vbuf, 0x10, 0)
+    struct.pack_into("<I", vbuf, 0x18, 1)
+    struct.pack_into("<I", vbuf, 0x1C, 0)
+    struct.pack_into("<Q", vbuf, 0x20, DAT_VIRTUAL_BASE + keys_offset)
+    struct.pack_into("<HHI", vbuf, 0x28, n, n, 0)
+    struct.pack_into("<Q", vbuf, 0x30, DAT_VIRTUAL_BASE + ptrs_offset)
+    struct.pack_into("<HHI", vbuf, 0x38, n, n, 0)
+
+    # Hash array
+    for i, e in enumerate(entries):
+        struct.pack_into("<I", vbuf, keys_offset + 4 * i, _joaat(e.name))
+
+    # Pointer array
+    for i in range(n):
+        tex_vaddr = DAT_VIRTUAL_BASE + textures_offset + _ENHANCED_TEX_SIZE * i
+        struct.pack_into("<Q", vbuf, ptrs_offset + 8 * i, tex_vaddr)
+
+    # Texture blocks (128 bytes each)
+    for i, e in enumerate(entries):
+        off = textures_offset + _ENHANCED_TEX_SIZE * i
+        bc = _block_count(e.format, e.width, e.height, 1, e.mip_count, align=1)
+        bs = _block_stride(e.format)
+
+        # TextureBase (0x00–0x4F)
+        struct.pack_into("<II", vbuf, off + 0x00, 0, 1)         # VFT=0, Unknown_4h=1
+        struct.pack_into("<II", vbuf, off + 0x08, bc, bs)        # BlockCount, BlockStride
+        struct.pack_into("<II", vbuf, off + 0x10, _ENHANCED_FLAGS, 0)
+        struct.pack_into("<HHH", vbuf, off + 0x18, e.width, e.height, 1)  # W, H, Depth
+        vbuf[off + 0x1E] = _ENHANCED_DIM_2D
+        vbuf[off + 0x1F] = BC_TO_RSC8[e.format]                 # DXGI format byte
+        vbuf[off + 0x20] = _ENHANCED_TILE_AUTO                  # TileMode = Auto (255)
+        vbuf[off + 0x21] = 0                                    # AntiAliasType
+        vbuf[off + 0x22] = e.mip_count
+        vbuf[off + 0x23] = _ENHANCED_UNK_23H
+        vbuf[off + 0x24] = 0
+        vbuf[off + 0x25] = 0
+        struct.pack_into("<H", vbuf, off + 0x26, 1)             # UsageCount
+        struct.pack_into("<Q", vbuf, off + 0x28, DAT_VIRTUAL_BASE + name_offsets[i])
+        struct.pack_into("<Q", vbuf, off + 0x30, DAT_VIRTUAL_BASE + off + 0x58)  # SRV ptr
+        struct.pack_into("<Q", vbuf, off + 0x38, DAT_PHYSICAL_BASE + phys_offsets[i])
+        struct.pack_into("<II", vbuf, off + 0x40, 0, _ENHANCED_UNK_44H)
+        struct.pack_into("<Q", vbuf, off + 0x48, 0)
+
+        # Texture extra (0x50–0x7F)
+        struct.pack_into("<Q", vbuf, off + 0x50, 0)
+        # Embedded ShaderResourceView (32 bytes at 0x58)
+        struct.pack_into("<Q", vbuf, off + 0x58, _ENHANCED_SRV_VFT)
+        struct.pack_into("<Q", vbuf, off + 0x60, 0)
+        struct.pack_into("<HHI", vbuf, off + 0x68, _ENHANCED_SRV_DIM_2D, 0xFFFF, 0xFFFFFFFF)
+        struct.pack_into("<Q", vbuf, off + 0x70, 0)
+        struct.pack_into("<Q", vbuf, off + 0x78, 0)
+
+    # Name strings
+    for i, name_data in enumerate(name_bytes_list):
+        start = name_offsets[i]
+        vbuf[start:start + len(name_data)] = name_data
+
+    # Pagemap (same as legacy)
+    vbuf[pagemap_offset] = 1
+    vbuf[pagemap_offset + 1] = 1
+
+    # Physical buffer
+    pbuf = bytearray(physical_size)
+    for i, data in enumerate(phys_data_list):
+        pbuf[phys_offsets[i]:phys_offsets[i] + len(data)] = data
+
+    return build_rsc7(bytes(vbuf), bytes(pbuf), version=_RSC7_VERSION_GEN9)
+
+
+def _parse_enhanced(file_data: bytes) -> ITD:
+    virtual_data, physical_data = decompress_rsc7(file_data)
+
+    count = _r_u16(virtual_data, 0x28)
+    items_off = _v2o(_r_u64(virtual_data, 0x30))
+
+    ytd = ITD(game=Game.GTAV_ENHANCED)
+
+    for i in range(count):
+        tex_off = _v2o(_r_u64(virtual_data, items_off + 8 * i))
+
+        # Same field offsets as RDR2 texture base
+        name = _read_name(virtual_data, _r_u64(virtual_data, tex_off + 0x28))
+        width = _r_u16(virtual_data, tex_off + 0x18)
+        height = _r_u16(virtual_data, tex_off + 0x1A)
+        format_byte = _r_u8(virtual_data, tex_off + 0x1F)
+        mip_levels = _r_u8(virtual_data, tex_off + 0x22)
+        data_ptr = _r_u64(virtual_data, tex_off + 0x38)
+
+        fmt = RSC8_TO_BC.get(format_byte)
+        if fmt is None:
+            raise ValueError(f"Unsupported gen9 format 0x{format_byte:02X} in '{name}'")
+
+        phys_off = _p2o(data_ptr)
+        data_size = total_mip_data_size(width, height, fmt, mip_levels)
+        pixel_data = physical_data[phys_off:phys_off + data_size]
+        offsets, sizes = _build_mip_info(width, height, fmt, mip_levels)
+
+        ytd.add(Texture.from_raw(pixel_data, width, height, fmt,
+                                 mip_levels, offsets, sizes, name))
+
+    return ytd
+
+
+def _inspect_enhanced(file_data: bytes) -> list[dict]:
+    virtual_data, _ = decompress_rsc7(file_data)
 
     count = _r_u16(virtual_data, 0x28)
     items_off = _v2o(_r_u64(virtual_data, 0x30))
