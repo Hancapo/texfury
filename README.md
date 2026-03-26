@@ -336,9 +336,9 @@ The `Game` enum controls which binary format is used when building YTD files. Wh
 
 ---
 
-### `ITD` — Internal Texture Dictionary (.ytd)
+### `ITD` — Internal Texture Dictionary
 
-`ITD` is the unified class for reading and writing texture dictionaries across supported RAGE games.
+`ITD` is a generic abstraction over RAGE engine texture dictionary formats. The platform prefix in the file extension denotes the architecture (`.ytd` for x64, `.wtd` for x32). `ITD` provides a single API for all of them.
 
 #### Building a YTD
 
