@@ -30,12 +30,12 @@ class Texture:
     """
 
     __slots__ = ("_data", "_width", "_height", "_format", "_mip_count",
-                 "_mip_offsets", "_mip_sizes", "_name")
+                 "_mip_offsets", "_mip_sizes", "_name", "_has_transparency")
 
     def __init__(self, data: bytes, width: int, height: int,
                  fmt: BCFormat, mip_count: int,
                  mip_offsets: list[int], mip_sizes: list[int],
-                 name: str = ""):
+                 name: str = "", has_transparency: bool | None = None):
         self._data = data
         self._width = width
         self._height = height
@@ -44,6 +44,7 @@ class Texture:
         self._mip_offsets = mip_offsets
         self._mip_sizes = mip_sizes
         self._name = name
+        self._has_transparency = has_transparency
 
     # ── Properties ────────────────────────────────────────────────────────
 
@@ -74,6 +75,43 @@ class Texture:
     @name.setter
     def name(self, value: str) -> None:
         self._name = value
+
+    @property
+    def is_power_of_two(self) -> bool:
+        """True if both dimensions are powers of two."""
+        w, h = self._width, self._height
+        return w > 0 and h > 0 and (w & (w - 1)) == 0 and (h & (h - 1)) == 0
+
+    @property
+    def has_alpha_format(self) -> bool:
+        """True if the compression format supports an alpha channel."""
+        return self._format in (BCFormat.BC3, BCFormat.BC7, BCFormat.A8R8G8B8)
+
+    def has_transparency(self) -> bool:
+        """Check if the texture has any non-opaque pixels.
+
+        When created via ``from_image``/``from_bytes``/``from_pil``, this
+        is detected from the original uncompressed pixels (free).
+        Otherwise falls back to decompressing mip 0 (slower).
+        """
+        if self._has_transparency is not None:
+            return self._has_transparency
+        rgba, w, h = self.to_rgba(0)
+        alpha = rgba[3::4]
+        result = alpha.count(255) != len(alpha)
+        self._has_transparency = result
+        return result
+
+    @property
+    def pot_dimensions(self) -> tuple[int, int]:
+        """Nearest power-of-two dimensions for this texture."""
+        return (native.next_power_of_two(self._width),
+                native.next_power_of_two(self._height))
+
+    @property
+    def is_block_compressed(self) -> bool:
+        """True if the format uses block compression (BC1-BC7)."""
+        return is_block_compressed(self._format)
 
     # ── Factory methods ───────────────────────────────────────────────────
 
@@ -396,10 +434,13 @@ class Texture:
             work_img = resized
 
         try:
+            transparent = native.has_transparency(work_img)
             c = native.compress(work_img, int(format), generate_mipmaps,
                                 min_mip_size, quality, int(mip_filter))
             try:
-                return cls._from_compressed_handle(c, name)
+                tex = cls._from_compressed_handle(c, name)
+                tex._has_transparency = transparent
+                return tex
             finally:
                 native.free_compressed(c)
         finally:
