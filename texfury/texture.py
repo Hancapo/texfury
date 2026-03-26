@@ -137,6 +137,66 @@ class Texture:
             native.free_image(img)
 
     @classmethod
+    def from_bytes(cls, data: bytes, *,
+                   format: BCFormat = BCFormat.BC7,
+                   quality: float = 0.7,
+                   generate_mipmaps: bool = True,
+                   min_mip_size: int = 4,
+                   resize_to_pot: bool = True,
+                   mip_filter: MipFilter = MipFilter.MITCHELL,
+                   name: str = "") -> Texture:
+        """Load an image from in-memory bytes and compress it.
+
+        Accepts the raw file bytes of any image format supported by
+        ``from_image`` (PNG, JPG, TGA, BMP, PSD, WebP, etc.).  If the
+        native decoder (stb_image) cannot handle the data, Pillow is
+        used as a fallback.
+
+        Parameters
+        ----------
+        data : bytes
+            Raw image file bytes (e.g. the contents of a PNG file).
+        format : BCFormat
+            Target compression format.
+        quality : float
+            Compression quality 0.0 (fastest) to 1.0 (best).
+        generate_mipmaps : bool
+            Generate mipmap chain.
+        min_mip_size : int
+            Minimum dimension for smallest mip level.
+        resize_to_pot : bool
+            Resize to nearest power-of-two if needed.
+        mip_filter : MipFilter
+            Downsampling filter for mipmap generation and POT resize.
+        name : str
+            Texture name.
+        """
+        # Try native decoder first (stb_image)
+        try:
+            img = native.load_image_memory(data)
+        except OSError:
+            if not _HAS_PIL:
+                raise
+            import io
+            return cls.from_pil(PILImage.open(io.BytesIO(data)),
+                                format=format, quality=quality,
+                                generate_mipmaps=generate_mipmaps,
+                                min_mip_size=min_mip_size,
+                                resize_to_pot=resize_to_pot,
+                                mip_filter=mip_filter,
+                                name=name)
+
+        try:
+            return cls._compress_image(img, format=format, quality=quality,
+                                        generate_mipmaps=generate_mipmaps,
+                                        min_mip_size=min_mip_size,
+                                        resize_to_pot=resize_to_pot,
+                                        mip_filter=mip_filter,
+                                        name=name)
+        finally:
+            native.free_image(img)
+
+    @classmethod
     def from_pil(cls, image, *,
                  format: BCFormat = BCFormat.BC7,
                  quality: float = 0.7,

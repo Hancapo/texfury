@@ -9,7 +9,7 @@ Built on **bc7enc_rdo** + **ISPC bc7e** for high-quality BC1/BC3/BC4/BC5/BC7 com
 - **BC1, BC3, BC4, BC5, BC7** block compression with adjustable quality (0.0–1.0)
 - **A8R8G8B8** uncompressed 32-bit BGRA format
 - **DDS** file read/write (legacy + DX10 extended headers)
-- **YTD** texture dictionary creation and extraction (GTA V and RDR2)
+- **YTD** texture dictionary creation and extraction (GTA V Legacy, GTA V Enhanced, and RDR2)
 - **Mipmap generation** with configurable minimum size
 - **Automatic power-of-two resize** (sRGB-aware via stb_image_resize2)
 - **Transparency detection** without manual pixel iteration
@@ -51,18 +51,16 @@ create_ytd_from_folder(
 )
 ```
 
-### Create a RDR2 YTD
+### Create a GTA V Enhanced or RDR2 YTD
 
 ```python
 from texfury import create_ytd_from_folder, BCFormat, Game
 
-create_ytd_from_folder(
-    "my_textures/",
-    "output.ytd",
-    game=Game.RDR2,
-    format=BCFormat.BC7,
-    quality=0.8,
-)
+# GTA V Enhanced
+create_ytd_from_folder("my_textures/", "output.ytd", game=Game.GTAV_ENHANCED)
+
+# RDR2
+create_ytd_from_folder("my_textures/", "output.ytd", game=Game.RDR2)
 ```
 
 ### Extract textures from a YTD
@@ -71,7 +69,7 @@ create_ytd_from_folder(
 from texfury import extract_ytd
 
 extract_ytd("vehicles.ytd", "extracted/")
-# Auto-detects GTA V or RDR2 format
+# Auto-detects GTA V (Legacy/Enhanced) or RDR2 format
 # Creates extracted/texture_name.dds for each texture
 ```
 
@@ -158,6 +156,23 @@ tex = Texture.from_image(
 ```
 
 **Supported image formats:** PNG, JPG/JPEG, TGA, BMP, PSD, WebP, GIF, HDR, PNM/PPM natively. With Pillow installed, any format Pillow supports (TIFF, ICO, EPS, etc.) works automatically as a fallback.
+
+##### `Texture.from_bytes(data, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, name)`
+
+Load an image from in-memory bytes and compress it. Same parameters as `from_image`, but accepts raw file bytes instead of a path. Useful for images from network responses, databases, or any non-file source.
+
+```python
+import httpx
+from texfury import Texture, BCFormat
+
+# From a network response
+resp = httpx.get("https://example.com/texture.png")
+tex = Texture.from_bytes(resp.content, format=BCFormat.BC7, name="downloaded")
+
+# From any bytes source
+with open("photo.png", "rb") as f:
+    tex = Texture.from_bytes(f.read(), format=BCFormat.BC7, quality=0.8)
+```
 
 ##### `Texture.from_pil(image, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, name)`
 
@@ -313,11 +328,11 @@ from texfury import Game
 
 | Value | Description |
 |-------|-------------|
-| `Game.GTAV_LEGACY` | GTA V (original / Legacy edition). **Default.** |
-| `Game.GTAV_ENHANCED` | GTA V Enhanced edition. *(not yet supported)* |
-| `Game.RDR2` | Red Dead Redemption 2. |
+| `Game.GTAV_LEGACY` | GTA V (original / Legacy edition). RSC7 version 13. **Default.** |
+| `Game.GTAV_ENHANCED` | GTA V Enhanced edition. RSC7 version 5. |
+| `Game.RDR2` | Red Dead Redemption 2. RSC8. |
 
-The `Game` enum controls which binary format is used when building YTD files (RSC7 for GTA V, RSC8 for RDR2). When loading or inspecting a YTD, the game is auto-detected from the file header.
+The `Game` enum controls which binary format is used when building YTD files. When loading or inspecting a YTD, the game is auto-detected from the file header.
 
 ---
 
@@ -342,14 +357,14 @@ ytd.add(Texture.from_image("diffuse.png", format=BCFormat.BC7))
 ytd.save("my_rdr2_vehicle.ytd")
 
 print(len(ytd))       # number of textures
-print(ytd.game)        # Game.GTAV_LEGACY or Game.RDR2
+print(ytd.game)        # Game.GTAV_LEGACY, Game.GTAV_ENHANCED, or Game.RDR2
 ```
 
 #### Loading and Iterating
 
 ```python
-ytd = ITD.load("vehicles.ytd")  # auto-detects GTA V or RDR2
-print(ytd.game)  # Game.GTAV_LEGACY or Game.RDR2
+ytd = ITD.load("vehicles.ytd")  # auto-detects game/edition
+print(ytd.game)  # Game.GTAV_LEGACY, Game.GTAV_ENHANCED, or Game.RDR2
 
 for tex in ytd.textures:
     print(f"{tex.name}: {tex.width}x{tex.height} {tex.format.name} ({tex.mip_count} mips)")
@@ -422,7 +437,7 @@ print(f"Created: {path}")
 |-----------|---------|-------------|
 | `folder` | — | Directory with image files |
 | `output` | `<folder>.ytd` | Output path |
-| `game` | `GTAV_LEGACY` | Target game (`Game.GTAV_LEGACY` or `Game.RDR2`) |
+| `game` | `GTAV_LEGACY` | Target game (`Game.GTAV_LEGACY`, `Game.GTAV_ENHANCED`, or `Game.RDR2`) |
 | `format` | `BC7` | Compression format for all textures |
 | `quality` | `0.7` | Compression quality 0.0–1.0 |
 | `generate_mipmaps` | `True` | Generate mipmap chain |
@@ -450,7 +465,7 @@ Parameters are the same as `create_ytd_from_folder`, except `output_dir` default
 
 #### `extract_ytd(ytd_path, output_dir)`
 
-Extract all textures from a YTD into DDS files. Auto-detects GTA V or RDR2 format.
+Extract all textures from a YTD into DDS files. Auto-detects game format.
 
 ```python
 from texfury import extract_ytd
