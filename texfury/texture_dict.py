@@ -28,8 +28,8 @@ from texfury.texture import Texture
 class Game(str, Enum):
     """Target game / edition for texture dictionaries."""
     GTA4 = "gta4"
-    GTAV_LEGACY = "gtav_legacy"
-    GTAV_ENHANCED = "gtav_enhanced"
+    GTA5 = "gta5"
+    GTA5_ENHANCED = "gta5_enhanced"
     RDR2 = "rdr2"
 
 
@@ -70,8 +70,8 @@ def _detect_game(file_data: bytes) -> Game:
     if magic == RSC7_MAGIC:
         version = struct.unpack_from("<I", file_data, 4)[0]
         if version == 5:
-            return Game.GTAV_ENHANCED
-        return Game.GTAV_LEGACY
+            return Game.GTA5_ENHANCED
+        return Game.GTA5
     if magic == RSC8_MAGIC:
         return Game.RDR2
     raise ValueError(f"Unknown texture dictionary format — magic: 0x{magic:08X}")
@@ -159,7 +159,7 @@ class ITD:
     Usage:
         td = ITD()                          # GTA V Legacy by default
         td = ITD(game=Game.GTA4)            # GTA IV (.wtd)
-        td = ITD(game=Game.GTAV_ENHANCED)   # GTA V Enhanced
+        td = ITD(game=Game.GTA5_ENHANCED)   # GTA V Enhanced
         td = ITD(game=Game.RDR2)            # RDR2
 
         td.add(Texture.from_image("logo.png"))
@@ -170,7 +170,7 @@ class ITD:
 
     __slots__ = ("_textures", "_game")
 
-    def __init__(self, game: Game = Game.GTAV_LEGACY) -> None:
+    def __init__(self, game: Game = Game.GTA5) -> None:
         self._textures: list[Texture] = []
         self._game: Game = game
 
@@ -224,8 +224,8 @@ class ITD:
         """Build and write the texture dictionary to a file."""
         builders = {
             Game.GTA4: _build_gta4,
-            Game.GTAV_LEGACY: _build_gtav,
-            Game.GTAV_ENHANCED: _build_enhanced,
+            Game.GTA5: _build_gtav,
+            Game.GTA5_ENHANCED: _build_enhanced,
             Game.RDR2: _build_rdr2,
         }
         data = builders[self._game](self._textures)
@@ -238,8 +238,8 @@ class ITD:
         game = _detect_game(file_data)
         parsers = {
             Game.GTA4: _parse_gta4,
-            Game.GTAV_LEGACY: _parse_gtav,
-            Game.GTAV_ENHANCED: _parse_enhanced,
+            Game.GTA5: _parse_gtav,
+            Game.GTA5_ENHANCED: _parse_enhanced,
             Game.RDR2: _parse_rdr2,
         }
         return parsers[game](file_data)
@@ -251,8 +251,8 @@ class ITD:
         game = _detect_game(file_data)
         inspectors = {
             Game.GTA4: _inspect_gta4,
-            Game.GTAV_LEGACY: _inspect_gtav,
-            Game.GTAV_ENHANCED: _inspect_enhanced,
+            Game.GTA5: _inspect_gtav,
+            Game.GTA5_ENHANCED: _inspect_enhanced,
             Game.RDR2: _inspect_rdr2,
         }
         return inspectors[game](file_data)
@@ -275,7 +275,7 @@ def create_dict_from_folder(
     folder: str | Path,
     output: str | Path | None = None,
     *,
-    game: Game = Game.GTAV_LEGACY,
+    game: Game = Game.GTA5,
     format: BCFormat = BCFormat.BC7,
     quality: float = 0.7,
     generate_mipmaps: bool = True,
@@ -528,7 +528,7 @@ def _parse_gtav(file_data: bytes) -> ITD:
     count = _r_u16(virtual_data, 0x28)
     items_off = _v2o(_r_u64(virtual_data, 0x30))
 
-    td = ITD(game=Game.GTAV_LEGACY)
+    td = ITD(game=Game.GTA5)
 
     for i in range(count):
         tex_off = _v2o(_r_u64(virtual_data, items_off + 8 * i))
@@ -911,7 +911,7 @@ def _parse_enhanced(file_data: bytes) -> ITD:
     count = _r_u16(virtual_data, 0x28)
     items_off = _v2o(_r_u64(virtual_data, 0x30))
 
-    td = ITD(game=Game.GTAV_ENHANCED)
+    td = ITD(game=Game.GTA5_ENHANCED)
 
     for i in range(count):
         tex_off = _v2o(_r_u64(virtual_data, items_off + 8 * i))

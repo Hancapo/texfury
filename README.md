@@ -57,7 +57,7 @@ create_ytd_from_folder(
 from texfury import create_ytd_from_folder, BCFormat, Game
 
 # GTA V Enhanced
-create_ytd_from_folder("my_textures/", "output.ytd", game=Game.GTAV_ENHANCED)
+create_ytd_from_folder("my_textures/", "output.ytd", game=Game.GTA5_ENHANCED)
 
 # RDR2
 create_ytd_from_folder("my_textures/", "output.ytd", game=Game.RDR2)
@@ -328,8 +328,8 @@ from texfury import Game
 
 | Value | Description |
 |-------|-------------|
-| `Game.GTAV_LEGACY` | GTA V (original / Legacy edition). RSC7 version 13. **Default.** |
-| `Game.GTAV_ENHANCED` | GTA V Enhanced edition. RSC7 version 5. |
+| `Game.GTA5` | GTA V (original / Legacy edition). RSC7 version 13. **Default.** |
+| `Game.GTA5_ENHANCED` | GTA V Enhanced edition. RSC7 version 5. |
 | `Game.RDR2` | Red Dead Redemption 2. RSC8. |
 
 The `Game` enum controls which binary format is used when building YTD files. When loading or inspecting a YTD, the game is auto-detected from the file header.
@@ -357,14 +357,14 @@ ytd.add(Texture.from_image("diffuse.png", format=BCFormat.BC7))
 ytd.save("my_rdr2_vehicle.ytd")
 
 print(len(ytd))       # number of textures
-print(ytd.game)        # Game.GTAV_LEGACY, Game.GTAV_ENHANCED, or Game.RDR2
+print(ytd.game)        # Game.GTA5, Game.GTA5_ENHANCED, or Game.RDR2
 ```
 
 #### Loading and Iterating
 
 ```python
 ytd = ITD.load("vehicles.ytd")  # auto-detects game/edition
-print(ytd.game)  # Game.GTAV_LEGACY, Game.GTAV_ENHANCED, or Game.RDR2
+print(ytd.game)  # Game.GTA5, Game.GTA5_ENHANCED, or Game.RDR2
 
 for tex in ytd.textures:
     print(f"{tex.name}: {tex.width}x{tex.height} {tex.format.name} ({tex.mip_count} mips)")
@@ -425,7 +425,7 @@ from texfury import create_ytd_from_folder, BCFormat, Game
 path = create_ytd_from_folder(
     "textures/",
     "output.ytd",
-    game=Game.RDR2,        # default: Game.GTAV_LEGACY
+    game=Game.RDR2,        # default: Game.GTA5
     format=BCFormat.BC7,
     quality=0.8,
     on_progress=lambda i, total, name: print(f"[{i}/{total}] {name}"),
@@ -437,7 +437,7 @@ print(f"Created: {path}")
 |-----------|---------|-------------|
 | `folder` | — | Directory with image files |
 | `output` | `<folder>.ytd` | Output path |
-| `game` | `GTAV_LEGACY` | Target game (`Game.GTAV_LEGACY`, `Game.GTAV_ENHANCED`, or `Game.RDR2`) |
+| `game` | `GTA5` | Target game (`Game.GTA5`, `Game.GTA5_ENHANCED`, or `Game.RDR2`) |
 | `format` | `BC7` | Compression format for all textures |
 | `quality` | `0.7` | Compression quality 0.0–1.0 |
 | `generate_mipmaps` | `True` | Generate mipmap chain |
