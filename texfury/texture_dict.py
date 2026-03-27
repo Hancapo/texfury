@@ -1,4 +1,4 @@
-"""Internal Texture Dictionary (ITD) — unified YTD/WTD handling for RAGE games."""
+"""Internal Texture Dictionary (ITD) — unified texture dictionary handling for RAGE games."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ from texfury.formats import (
     BC_TO_RSC8, RSC8_TO_BC,
     row_pitch, total_mip_data_size, mip_data_size, is_block_compressed,
 )
-from texfury.resource import (
+from texfury.rsc import (
     DAT_VIRTUAL_BASE, DAT_PHYSICAL_BASE,
     RSC7_MAGIC, build_rsc7, decompress_rsc7, parse_rsc7_header,
+    RSC8_MAGIC, build_rsc8, decompress_rsc8,
 )
-from texfury.rsc8 import RSC8_MAGIC, build_rsc8, decompress_rsc8
 from texfury.texture import Texture
 
 
@@ -28,7 +28,6 @@ class Game(str, Enum):
     GTAV_LEGACY = "gtav_legacy"
     GTAV_ENHANCED = "gtav_enhanced"
     RDR2 = "rdr2"
-    # GTA4 = "gta4"  # future .wtd support
 
 
 # ── Shared helpers ───────────────────────────────────────────────────────────
@@ -60,7 +59,7 @@ def _p2o(addr: int) -> int: return addr - DAT_PHYSICAL_BASE
 
 def _detect_game(file_data: bytes) -> Game:
     """Detect game from the RSC magic bytes and version."""
-    if len(file_data) < 16:
+    if len(file_data) < 12:
         raise ValueError("File too short to detect format")
     magic = struct.unpack_from("<I", file_data, 0)[0]
     if magic == RSC7_MAGIC:
@@ -70,7 +69,7 @@ def _detect_game(file_data: bytes) -> Game:
         return Game.GTAV_LEGACY
     if magic == RSC8_MAGIC:
         return Game.RDR2
-    raise ValueError(f"Unknown YTD format — magic: 0x{magic:08X}")
+    raise ValueError(f"Unknown texture dictionary format — magic: 0x{magic:08X}")
 
 
 def _build_mip_info(
@@ -150,17 +149,17 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff",
 
 class ITD:
     """Internal Texture Dictionary — generic abstraction over RAGE texture
-    dictionary formats: .ytd (x64) and .wtd (x32) in the future.
+    dictionary formats (.ytd / .wtd).
 
     Usage:
-        ytd = ITD()                          # GTA V Legacy by default
-        ytd = ITD(game=Game.GTAV_ENHANCED)   # GTA V Enhanced
-        ytd = ITD(game=Game.RDR2)            # RDR2
+        td = ITD()                          # GTA V Legacy by default
+        td = ITD(game=Game.GTAV_ENHANCED)   # GTA V Enhanced
+        td = ITD(game=Game.RDR2)            # RDR2
 
-        ytd.add(Texture.from_image("logo.png"))
-        ytd.save("output.ytd")
+        td.add(Texture.from_image("logo.png"))
+        td.save("output.ytd")
 
-        ytd = ITD.load("existing.ytd")       # auto-detects game
+        td = ITD.load("existing.ytd")       # auto-detects game
     """
 
     __slots__ = ("_textures", "_game")
@@ -180,7 +179,7 @@ class ITD:
     def add(self, texture: Texture) -> None:
         """Add a texture to the dictionary."""
         if not texture.name:
-            raise ValueError("Texture must have a name before adding to YTD")
+            raise ValueError("Texture must have a name before adding to a dictionary")
         self._textures.append(texture)
 
     def replace(self, name: str, texture: Texture) -> None:
@@ -192,7 +191,7 @@ class ITD:
                     texture.name = t.name
                 self._textures[i] = texture
                 return
-        raise KeyError(f"Texture '{name}' not found in YTD")
+        raise KeyError(f"Texture '{name}' not found in dictionary")
 
     def remove(self, name: str) -> None:
         """Remove a texture by name. Raises KeyError if not found."""
@@ -201,7 +200,7 @@ class ITD:
             if t.name.lower() == lower:
                 self._textures.pop(i)
                 return
-        raise KeyError(f"Texture '{name}' not found in YTD")
+        raise KeyError(f"Texture '{name}' not found in dictionary")
 
     def get(self, name: str) -> Texture:
         """Get a texture by name. Raises KeyError if not found."""
@@ -209,43 +208,45 @@ class ITD:
         for t in self._textures:
             if t.name.lower() == lower:
                 return t
-        raise KeyError(f"Texture '{name}' not found in YTD")
+        raise KeyError(f"Texture '{name}' not found in dictionary")
 
     def names(self) -> list[str]:
         """Return the names of all textures."""
         return [t.name for t in self._textures]
 
     def save(self, path: str | Path) -> None:
-        """Build and write the YTD to a file."""
-        if self._game == Game.GTAV_ENHANCED:
-            data = _build_enhanced(self._textures)
-        elif self._game == Game.RDR2:
-            data = _build_rdr2(self._textures)
-        else:
-            data = _build_gtav(self._textures)
+        """Build and write the texture dictionary to a file."""
+        builders = {
+            Game.GTAV_LEGACY: _build_gtav,
+            Game.GTAV_ENHANCED: _build_enhanced,
+            Game.RDR2: _build_rdr2,
+        }
+        data = builders[self._game](self._textures)
         Path(path).write_bytes(data)
 
     @staticmethod
     def load(path: str | Path) -> ITD:
-        """Read a YTD file — auto-detects GTA V (Legacy/Enhanced) or RDR2."""
+        """Read a texture dictionary — auto-detects game from header."""
         file_data = Path(path).read_bytes()
         game = _detect_game(file_data)
-        if game == Game.RDR2:
-            return _parse_rdr2(file_data)
-        if game == Game.GTAV_ENHANCED:
-            return _parse_enhanced(file_data)
-        return _parse_gtav(file_data)
+        parsers = {
+            Game.GTAV_LEGACY: _parse_gtav,
+            Game.GTAV_ENHANCED: _parse_enhanced,
+            Game.RDR2: _parse_rdr2,
+        }
+        return parsers[game](file_data)
 
     @staticmethod
     def inspect(path: str | Path) -> list[dict]:
         """Read texture metadata without loading pixel data. Auto-detects game."""
         file_data = Path(path).read_bytes()
         game = _detect_game(file_data)
-        if game == Game.RDR2:
-            return _inspect_rdr2(file_data)
-        if game == Game.GTAV_ENHANCED:
-            return _inspect_enhanced(file_data)
-        return _inspect_gtav(file_data)
+        inspectors = {
+            Game.GTAV_LEGACY: _inspect_gtav,
+            Game.GTAV_ENHANCED: _inspect_enhanced,
+            Game.RDR2: _inspect_rdr2,
+        }
+        return inspectors[game](file_data)
 
     def __len__(self) -> int:
         return len(self._textures)
@@ -261,7 +262,7 @@ class ITD:
 
 # ── Convenience functions ────────────────────────────────────────────────────
 
-def create_ytd_from_folder(
+def create_dict_from_folder(
     folder: str | Path,
     output: str | Path | None = None,
     *,
@@ -273,16 +274,16 @@ def create_ytd_from_folder(
     mip_filter: MipFilter = MipFilter.MITCHELL,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> Path:
-    """Create a YTD from all images in a folder.
+    """Create a texture dictionary from all images in a folder.
 
     Parameters
     ----------
     folder : path
         Directory containing image files.
     output : path, optional
-        Output .ytd path. Defaults to <folder_name>.ytd next to the folder.
+        Output path. Defaults to <folder_name>.ytd next to the folder.
     game : Game
-        Target game (GTAV or RDR2). Defaults to GTAV.
+        Target game. Defaults to GTAV_LEGACY.
     format : BCFormat
         Compression format for all textures.
     quality : float
@@ -298,7 +299,7 @@ def create_ytd_from_folder(
 
     Returns
     -------
-    Path to the created YTD file.
+    Path to the created texture dictionary file.
     """
     folder = Path(folder)
     if not folder.is_dir():
@@ -315,7 +316,7 @@ def create_ytd_from_folder(
     if not files:
         raise FileNotFoundError(f"No image files found in {folder}")
 
-    ytd = ITD(game=game)
+    td = ITD(game=game)
     total = len(files)
     for i, f in enumerate(files):
         name = f.stem.lower()
@@ -329,9 +330,9 @@ def create_ytd_from_folder(
                                      generate_mipmaps=generate_mipmaps,
                                      min_mip_size=min_mip_size,
                                      mip_filter=mip_filter, name=name)
-        ytd.add(tex)
+        td.add(tex)
 
-    ytd.save(output)
+    td.save(output)
     return output
 
 
@@ -378,19 +379,19 @@ def batch_convert(
     return output_dir
 
 
-def extract_ytd(
-    ytd_path: str | Path,
+def extract_dict(
+    dict_path: str | Path,
     output_dir: str | Path | None = None,
 ) -> Path:
-    """Extract all textures from a YTD as DDS files. Auto-detects game."""
-    ytd_path = Path(ytd_path)
+    """Extract all textures from a texture dictionary as DDS files. Auto-detects game."""
+    dict_path = Path(dict_path)
     if output_dir is None:
-        output_dir = ytd_path.parent / ytd_path.stem
+        output_dir = dict_path.parent / dict_path.stem
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    ytd = ITD.load(ytd_path)
-    for tex in ytd.textures:
+    td = ITD.load(dict_path)
+    for tex in td.textures:
         tex.save_dds(output_dir / f"{tex.name}.dds")
     return output_dir
 
@@ -426,7 +427,7 @@ def _build_gtav(textures: list[Texture]) -> bytes:
     entries = sorted(textures, key=lambda t: _joaat(t.name))
     n = len(entries)
     if n == 0:
-        raise ValueError("Cannot create YTD with zero textures")
+        raise ValueError("Cannot create texture dictionary with zero textures")
 
     # Virtual layout
     dict_size = 0x40
@@ -518,7 +519,7 @@ def _parse_gtav(file_data: bytes) -> ITD:
     count = _r_u16(virtual_data, 0x28)
     items_off = _v2o(_r_u64(virtual_data, 0x30))
 
-    ytd = ITD(game=Game.GTAV_LEGACY)
+    td = ITD(game=Game.GTAV_LEGACY)
 
     for i in range(count):
         tex_off = _v2o(_r_u64(virtual_data, items_off + 8 * i))
@@ -532,17 +533,17 @@ def _parse_gtav(file_data: bytes) -> ITD:
 
         fmt = _resolve_gtav_format(format_val)
         if fmt is None:
-            raise ValueError(f"Unsupported texture format in YTD: 0x{format_val:08X}")
+            raise ValueError(f"Unsupported texture format: 0x{format_val:08X}")
 
         phys_off = _p2o(data_ptr)
         data_size = total_mip_data_size(width, height, fmt, mip_levels)
         pixel_data = physical_data[phys_off:phys_off + data_size]
         offsets, sizes = _build_mip_info(width, height, fmt, mip_levels)
 
-        ytd.add(Texture.from_raw(pixel_data, width, height, fmt,
+        td.add(Texture.from_raw(pixel_data, width, height, fmt,
                                  mip_levels, offsets, sizes, name))
 
-    return ytd
+    return td
 
 
 def _inspect_gtav(file_data: bytes) -> list[dict]:
@@ -593,7 +594,7 @@ def _build_rdr2(textures: list[Texture]) -> bytes:
     entries = sorted(textures, key=lambda t: _joaat(t.name))
     n = len(entries)
     if n == 0:
-        raise ValueError("Cannot create YTD with zero textures")
+        raise ValueError("Cannot create texture dictionary with zero textures")
 
     # Virtual layout
     dict_size = 64
@@ -711,7 +712,7 @@ def _parse_rdr2(file_data: bytes) -> ITD:
     count = _r_u16(virtual_data, 0x28)
     items_off = _v2o(_r_u64(virtual_data, 0x30))
 
-    ytd = ITD(game=Game.RDR2)
+    td = ITD(game=Game.RDR2)
 
     for i in range(count):
         tex_off = _v2o(_r_u64(virtual_data, items_off + 8 * i))
@@ -732,10 +733,10 @@ def _parse_rdr2(file_data: bytes) -> ITD:
         pixel_data = physical_data[phys_off:phys_off + data_size]
         offsets, sizes = _build_mip_info(width, height, fmt, mip_levels)
 
-        ytd.add(Texture.from_raw(pixel_data, width, height, fmt,
+        td.add(Texture.from_raw(pixel_data, width, height, fmt,
                                  mip_levels, offsets, sizes, name))
 
-    return ytd
+    return td
 
 
 def _inspect_rdr2(file_data: bytes) -> list[dict]:
@@ -786,7 +787,7 @@ def _build_enhanced(textures: list[Texture]) -> bytes:
     entries = sorted(textures, key=lambda t: _joaat(t.name))
     n = len(entries)
     if n == 0:
-        raise ValueError("Cannot create YTD with zero textures")
+        raise ValueError("Cannot create texture dictionary with zero textures")
 
     # Virtual layout (same dictionary header as legacy)
     dict_size = 0x40
@@ -901,7 +902,7 @@ def _parse_enhanced(file_data: bytes) -> ITD:
     count = _r_u16(virtual_data, 0x28)
     items_off = _v2o(_r_u64(virtual_data, 0x30))
 
-    ytd = ITD(game=Game.GTAV_ENHANCED)
+    td = ITD(game=Game.GTAV_ENHANCED)
 
     for i in range(count):
         tex_off = _v2o(_r_u64(virtual_data, items_off + 8 * i))
@@ -923,10 +924,10 @@ def _parse_enhanced(file_data: bytes) -> ITD:
         pixel_data = physical_data[phys_off:phys_off + data_size]
         offsets, sizes = _build_mip_info(width, height, fmt, mip_levels)
 
-        ytd.add(Texture.from_raw(pixel_data, width, height, fmt,
+        td.add(Texture.from_raw(pixel_data, width, height, fmt,
                                  mip_levels, offsets, sizes, name))
 
-    return ytd
+    return td
 
 
 def _inspect_enhanced(file_data: bytes) -> list[dict]:
@@ -956,3 +957,4 @@ def _inspect_enhanced(file_data: bytes) -> list[dict]:
         })
 
     return result
+

@@ -1,12 +1,9 @@
-"""RAGE resource format (RSC8) encoding and assembly for RDR2 .ytd files."""
+"""RAGE resource format (RSC8) — RDR2 .ytd files."""
 
 from __future__ import annotations
 
 import struct
 import zlib
-
-DAT_VIRTUAL_BASE: int = 0x50000000
-DAT_PHYSICAL_BASE: int = 0x60000000
 
 RSC8_MAGIC: int = 0x38435352  # "RSC8" LE
 RSC8_VERSION_YTD: int = 2

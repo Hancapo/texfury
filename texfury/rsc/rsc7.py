@@ -1,13 +1,11 @@
-"""RAGE resource format (RSC7) encoding and assembly for GTA V .ytd files."""
+"""RAGE resource format (RSC7) — GTA V .ytd files."""
 
 from __future__ import annotations
 
 import struct
 import zlib
 
-DAT_VIRTUAL_BASE: int = 0x50000000
-DAT_PHYSICAL_BASE: int = 0x60000000
-DAT_BASE_SIZE: int = 0x2000
+from texfury.rsc import DAT_BASE_SIZE
 
 RSC7_MAGIC: int = 0x37435352
 RSC7_VERSION_YTD: int = 13
@@ -78,8 +76,6 @@ def build_rsc7(virtual_data: bytes, physical_data: bytes,
     sys_chunk_size = total_from_flags(sys_flags)
     gfx_chunk_size = total_from_flags(gfx_flags) if gfx_flags else 0
 
-    # Encode version nibbles in bits 28-31 of each flag field.
-    # CW extracts version via: (sys_flags>>28)<<4 | (gfx_flags>>28).
     sys_flags |= ((version >> 4) & 0xF) << 28
     gfx_flags |= (version & 0xF) << 28
 
@@ -103,7 +99,6 @@ def parse_rsc7_header(data: bytes) -> tuple[int, int, int]:
 def decompress_rsc7(data: bytes) -> tuple[bytes, bytes]:
     _, sys_flags, gfx_flags = parse_rsc7_header(data)
     compressed = data[16:]
-    # Mask out version nibbles (bits 28-31) before computing page sizes.
     sys_size = total_from_flags(sys_flags & 0x0FFFFFFF)
     gfx_size = total_from_flags(gfx_flags & 0x0FFFFFFF)
     raw = _deflate_decompress(compressed, sys_size + gfx_size)

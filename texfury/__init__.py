@@ -1,13 +1,13 @@
-"""texfury — Fast image-to-DDS conversion and YTD texture dictionaries."""
+"""texfury — Fast image-to-DDS conversion and texture dictionary toolkit."""
 
 from texfury.formats import BCFormat, MipFilter, suggest_format
 from texfury.texture import Texture
-from texfury.ytd import (
+from texfury.texture_dict import (
     Game,
     ITD,
-    create_ytd_from_folder,
+    create_dict_from_folder,
     batch_convert,
-    extract_ytd,
+    extract_dict,
 )
 from texfury.utils import (
     has_transparency,
@@ -17,7 +17,11 @@ from texfury.utils import (
     image_dimensions,
 )
 
-__version__ = "1.3.1"
+# Backward-compatible aliases
+create_ytd_from_folder = create_dict_from_folder
+extract_ytd = extract_dict
+
+__version__ = "1.4.0"
 
 __all__ = [
     "BCFormat",
@@ -26,8 +30,11 @@ __all__ = [
     "Texture",
     "Game",
     "ITD",
-    "create_ytd_from_folder",
+    "create_dict_from_folder",
     "batch_convert",
+    "extract_dict",
+    # Backward-compatible aliases
+    "create_ytd_from_folder",
     "extract_ytd",
     "has_transparency",
     "is_power_of_two",
