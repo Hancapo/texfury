@@ -174,6 +174,8 @@ class ITD:
         self._textures: list[Texture] = []
         self._game: Game = game
 
+    # ── Properties ──────────────────────────────────────────────────────
+
     @property
     def game(self) -> Game:
         return self._game
@@ -181,6 +183,8 @@ class ITD:
     @property
     def textures(self) -> list[Texture]:
         return list(self._textures)
+
+    # ── Mutation ────────────────────────────────────────────────────────
 
     def add(self, texture: Texture) -> None:
         """Add a texture to the dictionary."""
@@ -208,6 +212,8 @@ class ITD:
                 return
         raise KeyError(f"Texture '{name}' not found in dictionary")
 
+    # ── Lookup ──────────────────────────────────────────────────────────
+
     def get(self, name: str) -> Texture:
         """Get a texture by name. Raises KeyError if not found."""
         lower = name.lower()
@@ -219,6 +225,8 @@ class ITD:
     def names(self) -> list[str]:
         """Return the names of all textures."""
         return [t.name for t in self._textures]
+
+    # ── I/O ─────────────────────────────────────────────────────────────
 
     def save(self, path: str | Path) -> None:
         """Build and write the texture dictionary to a file."""
@@ -244,6 +252,62 @@ class ITD:
         }
         return parsers[game](file_data)
 
+    @classmethod
+    def from_folder(
+        cls,
+        folder: str | Path,
+        *,
+        game: Game = Game.GTA5,
+        format: BCFormat = BCFormat.BC7,
+        quality: float = 0.7,
+        generate_mipmaps: bool = True,
+        min_mip_size: int = 4,
+        mip_filter: MipFilter = MipFilter.MITCHELL,
+        on_progress: Callable[[int, int, str], None] | None = None,
+    ) -> ITD:
+        """Build a texture dictionary from all images in a folder.
+
+        Returns the populated ITD without writing to disk.
+        Call ``.save(path)`` afterwards to write the file.
+        """
+        folder = Path(folder)
+        if not folder.is_dir():
+            raise FileNotFoundError(f"Not a directory: {folder}")
+
+        files = sorted(
+            f for f in folder.iterdir()
+            if f.suffix.lower() in IMAGE_EXTENSIONS or f.suffix.lower() == ".dds"
+        )
+        if not files:
+            raise FileNotFoundError(f"No image files found in {folder}")
+
+        td = cls(game=game)
+        total = len(files)
+        for i, f in enumerate(files):
+            name = f.stem.lower()
+            if on_progress:
+                on_progress(i + 1, total, name)
+            if f.suffix.lower() == ".dds":
+                tex = Texture.from_dds(f, name=name)
+            else:
+                tex = Texture.from_image(f, format=format, quality=quality,
+                                         generate_mipmaps=generate_mipmaps,
+                                         min_mip_size=min_mip_size,
+                                         mip_filter=mip_filter, name=name)
+            td.add(tex)
+        return td
+
+    def extract(self, output_dir: str | Path) -> Path:
+        """Extract all textures to DDS files in the given directory.
+
+        Returns the output directory path.
+        """
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        for tex in self._textures:
+            tex.save_dds(out / f"{tex.name}.dds")
+        return out
+
     @staticmethod
     def inspect(path: str | Path) -> list[dict]:
         """Read texture metadata without loading pixel data. Auto-detects game."""
@@ -257,8 +321,17 @@ class ITD:
         }
         return inspectors[game](file_data)
 
+    # ── Dunder ──────────────────────────────────────────────────────────
+
     def __len__(self) -> int:
         return len(self._textures)
+
+    def __iter__(self):
+        return iter(self._textures)
+
+    def __getitem__(self, name: str) -> Texture:
+        """Lookup by name: ``td["body_d"]``."""
+        return self.get(name)
 
     def __contains__(self, name: str) -> bool:
         lower = name.lower()
@@ -282,67 +355,22 @@ def create_dict_from_folder(
     min_mip_size: int = 4,
     mip_filter: MipFilter = MipFilter.MITCHELL,
     on_progress: Callable[[int, int, str], None] | None = None,
-) -> Path:
+) -> ITD:
     """Create a texture dictionary from all images in a folder.
 
-    Parameters
-    ----------
-    folder : path
-        Directory containing image files.
-    output : path, optional
-        Output path. Defaults to <folder_name>.ytd next to the folder.
-    game : Game
-        Target game. Defaults to GTAV_LEGACY.
-    format : BCFormat
-        Compression format for all textures.
-    quality : float
-        Compression quality (0.0–1.0).
-    generate_mipmaps : bool
-        Generate mipmap chains.
-    min_mip_size : int
-        Minimum dimension for smallest mip.
-    mip_filter : MipFilter
-        Downsampling filter for mipmap generation.
-    on_progress : callable, optional
-        Progress callback: (current_index, total_count, texture_name).
+    If *output* is given the dictionary is saved to disk immediately.
+    Otherwise it is only built in memory — call ``td.save(path)`` later.
 
-    Returns
-    -------
-    Path to the created texture dictionary file.
+    Returns the populated :class:`ITD`.
     """
-    folder = Path(folder)
-    if not folder.is_dir():
-        raise FileNotFoundError(f"Not a directory: {folder}")
-
-    if output is None:
-        output = folder.parent / f"{folder.name}.ytd"
-    output = Path(output)
-
-    files = sorted(
-        f for f in folder.iterdir()
-        if f.suffix.lower() in IMAGE_EXTENSIONS or f.suffix.lower() == ".dds"
+    td = ITD.from_folder(
+        folder, game=game, format=format, quality=quality,
+        generate_mipmaps=generate_mipmaps, min_mip_size=min_mip_size,
+        mip_filter=mip_filter, on_progress=on_progress,
     )
-    if not files:
-        raise FileNotFoundError(f"No image files found in {folder}")
-
-    td = ITD(game=game)
-    total = len(files)
-    for i, f in enumerate(files):
-        name = f.stem.lower()
-        if on_progress:
-            on_progress(i + 1, total, name)
-
-        if f.suffix.lower() == ".dds":
-            tex = Texture.from_dds(f, name=name)
-        else:
-            tex = Texture.from_image(f, format=format, quality=quality,
-                                     generate_mipmaps=generate_mipmaps,
-                                     min_mip_size=min_mip_size,
-                                     mip_filter=mip_filter, name=name)
-        td.add(tex)
-
-    td.save(output)
-    return output
+    if output is not None:
+        td.save(output)
+    return td
 
 
 def batch_convert(
@@ -389,20 +417,28 @@ def batch_convert(
 
 
 def extract_dict(
-    dict_path: str | Path,
+    source: ITD | str | Path,
     output_dir: str | Path | None = None,
 ) -> Path:
-    """Extract all textures from a texture dictionary as DDS files. Auto-detects game."""
-    dict_path = Path(dict_path)
-    if output_dir is None:
-        output_dir = dict_path.parent / dict_path.stem
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    """Extract all textures as DDS files.
 
-    td = ITD.load(dict_path)
-    for tex in td.textures:
-        tex.save_dds(output_dir / f"{tex.name}.dds")
-    return output_dir
+    *source* can be an already-loaded :class:`ITD` or a file path (auto-detects game).
+    If *output_dir* is omitted, a folder named after the file stem is created
+    next to it (or ``extracted/`` when *source* is an ITD).
+
+    Returns the output directory path.
+    """
+    if isinstance(source, ITD):
+        td = source
+        if output_dir is None:
+            output_dir = Path("extracted")
+    else:
+        source = Path(source)
+        td = ITD.load(source)
+        if output_dir is None:
+            output_dir = source.parent / source.stem
+
+    return td.extract(output_dir)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
