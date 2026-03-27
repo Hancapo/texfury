@@ -11,10 +11,12 @@ from texfury.formats import (
     BCFormat, MipFilter,
     BC_TO_DX9, DX9_TO_BC, FOURCC_TO_BC, DXGI_TO_BC,
     BC_TO_RSC8, RSC8_TO_BC,
+    BC_TO_RSC5, RSC5_TO_BC, _GTA4_UNSUPPORTED,
     row_pitch, total_mip_data_size, mip_data_size, is_block_compressed,
 )
 from texfury.rsc import (
     DAT_VIRTUAL_BASE, DAT_PHYSICAL_BASE,
+    RSC5_MAGIC, build_rsc5, decompress_rsc5,
     RSC7_MAGIC, build_rsc7, decompress_rsc7, parse_rsc7_header,
     RSC8_MAGIC, build_rsc8, decompress_rsc8,
 )
@@ -25,6 +27,7 @@ from texfury.texture import Texture
 
 class Game(str, Enum):
     """Target game / edition for texture dictionaries."""
+    GTA4 = "gta4"
     GTAV_LEGACY = "gtav_legacy"
     GTAV_ENHANCED = "gtav_enhanced"
     RDR2 = "rdr2"
@@ -62,6 +65,8 @@ def _detect_game(file_data: bytes) -> Game:
     if len(file_data) < 12:
         raise ValueError("File too short to detect format")
     magic = struct.unpack_from("<I", file_data, 0)[0]
+    if magic == RSC5_MAGIC:
+        return Game.GTA4
     if magic == RSC7_MAGIC:
         version = struct.unpack_from("<I", file_data, 4)[0]
         if version == 5:
@@ -149,10 +154,11 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tiff",
 
 class ITD:
     """Internal Texture Dictionary — generic abstraction over RAGE texture
-    dictionary formats (.ytd / .wtd).
+    dictionary formats (.wtd for x32, .ytd for x64).
 
     Usage:
         td = ITD()                          # GTA V Legacy by default
+        td = ITD(game=Game.GTA4)            # GTA IV (.wtd)
         td = ITD(game=Game.GTAV_ENHANCED)   # GTA V Enhanced
         td = ITD(game=Game.RDR2)            # RDR2
 
@@ -217,6 +223,7 @@ class ITD:
     def save(self, path: str | Path) -> None:
         """Build and write the texture dictionary to a file."""
         builders = {
+            Game.GTA4: _build_gta4,
             Game.GTAV_LEGACY: _build_gtav,
             Game.GTAV_ENHANCED: _build_enhanced,
             Game.RDR2: _build_rdr2,
@@ -230,6 +237,7 @@ class ITD:
         file_data = Path(path).read_bytes()
         game = _detect_game(file_data)
         parsers = {
+            Game.GTA4: _parse_gta4,
             Game.GTAV_LEGACY: _parse_gtav,
             Game.GTAV_ENHANCED: _parse_enhanced,
             Game.RDR2: _parse_rdr2,
@@ -242,6 +250,7 @@ class ITD:
         file_data = Path(path).read_bytes()
         game = _detect_game(file_data)
         inspectors = {
+            Game.GTA4: _inspect_gta4,
             Game.GTAV_LEGACY: _inspect_gtav,
             Game.GTAV_ENHANCED: _inspect_enhanced,
             Game.RDR2: _inspect_rdr2,
@@ -958,3 +967,201 @@ def _inspect_enhanced(file_data: bytes) -> list[dict]:
 
     return result
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GTA IV (RSC5) internals — 32-bit pointers, .wtd files
+# ═════════════════════════════════════════════════════════════════════════════
+
+_GTA4_TEX_SIZE = 80      # bytes per texture struct
+_GTA4_DICT_SIZE = 32     # bytes for dictionary header
+_GTA4_BLOCKMAP_SIZE = 528  # 16 + 128 * 4
+
+_V32 = 0x50000000
+_P32 = 0x60000000
+
+
+def _v2o32(addr: int) -> int:
+    return addr - _V32
+
+
+def _p2o32(addr: int) -> int:
+    return addr - _P32
+
+
+def _read_name_gta4(virtual_data: bytes, name_ptr: int) -> str:
+    """Read a GTA4 name string (format: 'pack:/{name}.dds')."""
+    off = _v2o32(name_ptr)
+    end = virtual_data.index(b"\x00", off)
+    raw = virtual_data[off:end].decode("utf-8", errors="replace")
+    name = raw
+    if name.startswith("pack:/"):
+        name = name[6:]
+    if name.endswith(".dds"):
+        name = name[:-4]
+    return name
+
+
+def _build_gta4(textures: list[Texture]) -> bytes:
+    entries = sorted(textures, key=lambda t: _joaat(t.name))
+    n = len(entries)
+    if n == 0:
+        raise ValueError("Cannot create texture dictionary with zero textures")
+
+    for e in entries:
+        if e.format in _GTA4_UNSUPPORTED:
+            raise ValueError(
+                f"Format {e.format.name} is not supported by GTA IV. "
+                f"Use BC1, BC3, or A8R8G8B8."
+            )
+
+    # Virtual layout — all 32-bit pointers
+    blockmap_off = _GTA4_DICT_SIZE
+    hash_off = _align(blockmap_off + _GTA4_BLOCKMAP_SIZE, 16)
+    ptr_off = _align(hash_off + n * 4, 16)
+    tex_off_base = _align(ptr_off + n * 4, 16)
+
+    cur = tex_off_base + _GTA4_TEX_SIZE * n
+    name_offsets: list[int] = []
+    name_bytes_list: list[bytes] = []
+    for e in entries:
+        name_offsets.append(cur)
+        encoded = f"pack:/{e.name}.dds".encode("utf-8") + b"\x00"
+        name_bytes_list.append(encoded)
+        cur += len(encoded)
+
+    virtual_size = _align(cur, 16)
+
+    # Physical layout
+    phys_offsets: list[int] = []
+    phys_cur = 0
+    for e in entries:
+        phys_offsets.append(phys_cur)
+        phys_cur += len(e.data)
+
+    # Build virtual buffer
+    vbuf = bytearray(virtual_size)
+
+    # Dictionary (32 bytes)
+    struct.pack_into("<I", vbuf, 0x00, 0)                    # VFT
+    struct.pack_into("<I", vbuf, 0x04, _V32 + blockmap_off)  # BlockMap ptr
+    struct.pack_into("<I", vbuf, 0x08, 0)                    # ParentDictionary
+    struct.pack_into("<I", vbuf, 0x0C, 1)                    # UsageCount
+    struct.pack_into("<I", vbuf, 0x10, _V32 + hash_off)      # Hash array ptr
+    struct.pack_into("<HH", vbuf, 0x14, n, n)                # count, capacity
+    struct.pack_into("<I", vbuf, 0x18, _V32 + ptr_off)       # Textures ptr array ptr
+    struct.pack_into("<HH", vbuf, 0x1C, n, n)                # count, capacity
+
+    # BlockMap (528 bytes = 16 header + 128 * 4 padding)
+    struct.pack_into("<I", vbuf, blockmap_off + 0x00, 0)
+    for bm_i in range(1, 132):  # entries 1-131 = 0xCDCDCDCD
+        struct.pack_into("<I", vbuf, blockmap_off + bm_i * 4, 0xCDCDCDCD)
+
+    # Hash array
+    for i, e in enumerate(entries):
+        struct.pack_into("<I", vbuf, hash_off + 4 * i, _joaat(e.name))
+
+    # Pointer array (uint32)
+    for i in range(n):
+        struct.pack_into("<I", vbuf, ptr_off + 4 * i,
+                         _V32 + tex_off_base + _GTA4_TEX_SIZE * i)
+
+    # Texture blocks (80 bytes each)
+    for i, e in enumerate(entries):
+        off = tex_off_base + _GTA4_TEX_SIZE * i
+        format_val = BC_TO_RSC5[e.format]
+        # Stride = width * bits_per_pixel / 8
+        bpp = {BCFormat.BC1: 4, BCFormat.BC3: 8, BCFormat.A8R8G8B8: 32}[e.format]
+        stride = e.width * bpp // 8
+
+        # TextureBase (28 bytes)
+        struct.pack_into("<II", vbuf, off + 0x00, 0, 0)       # VFT, Unknown1
+        struct.pack_into("<HH", vbuf, off + 0x08, 1, 0)       # Unknown2=1, Unknown3=0
+        struct.pack_into("<II", vbuf, off + 0x0C, 0, 0)       # Unknown4, Unknown5
+        struct.pack_into("<I", vbuf, off + 0x14, _V32 + name_offsets[i])
+        struct.pack_into("<I", vbuf, off + 0x18, 0)           # Unknown6
+
+        # Texture-specific (52 bytes)
+        struct.pack_into("<HH", vbuf, off + 0x1C, e.width, e.height)
+        struct.pack_into("<I", vbuf, off + 0x20, format_val)
+        struct.pack_into("<H", vbuf, off + 0x24, stride)
+        vbuf[off + 0x26] = 0                                   # TextureType
+        vbuf[off + 0x27] = e.mip_count
+        struct.pack_into("<ffffff", vbuf, off + 0x28,
+                         1.0, 1.0, 1.0, 0.0, 0.0, 0.0)       # Unknown7–12
+        struct.pack_into("<II", vbuf, off + 0x40, 0, 0)       # Prev/Next
+        struct.pack_into("<I", vbuf, off + 0x48, _P32 + phys_offsets[i])
+        struct.pack_into("<I", vbuf, off + 0x4C, 0)           # Unknown13
+
+    # Name strings
+    for i, name_data in enumerate(name_bytes_list):
+        start = name_offsets[i]
+        vbuf[start:start + len(name_data)] = name_data
+
+    # Physical buffer
+    pbuf = bytearray()
+    for e in entries:
+        pbuf.extend(e.data)
+
+    return build_rsc5(bytes(vbuf), bytes(pbuf))
+
+
+def _parse_gta4(file_data: bytes) -> ITD:
+    virtual_data, physical_data = decompress_rsc5(file_data)
+
+    count = _r_u16(virtual_data, 0x14)
+    ptr_arr_off = _v2o32(_r_u32(virtual_data, 0x18))
+
+    td = ITD(game=Game.GTA4)
+
+    for i in range(count):
+        tex_off = _v2o32(_r_u32(virtual_data, ptr_arr_off + 4 * i))
+
+        name = _read_name_gta4(virtual_data, _r_u32(virtual_data, tex_off + 0x14))
+        width = _r_u16(virtual_data, tex_off + 0x1C)
+        height = _r_u16(virtual_data, tex_off + 0x1E)
+        format_val = _r_u32(virtual_data, tex_off + 0x20)
+        mip_levels = virtual_data[tex_off + 0x27]
+        data_ptr = _r_u32(virtual_data, tex_off + 0x48)
+
+        fmt = RSC5_TO_BC.get(format_val)
+        if fmt is None:
+            raise ValueError(f"Unsupported RSC5 format 0x{format_val:08X} in '{name}'")
+
+        phys_off = _p2o32(data_ptr)
+        data_size = total_mip_data_size(width, height, fmt, mip_levels)
+        pixel_data = physical_data[phys_off:phys_off + data_size]
+        offsets, sizes = _build_mip_info(width, height, fmt, mip_levels)
+
+        td.add(Texture.from_raw(pixel_data, width, height, fmt,
+                                 mip_levels, offsets, sizes, name))
+
+    return td
+
+
+def _inspect_gta4(file_data: bytes) -> list[dict]:
+    virtual_data, _ = decompress_rsc5(file_data)
+
+    count = _r_u16(virtual_data, 0x14)
+    ptr_arr_off = _v2o32(_r_u32(virtual_data, 0x18))
+
+    result = []
+    for i in range(count):
+        tex_off = _v2o32(_r_u32(virtual_data, ptr_arr_off + 4 * i))
+
+        name = _read_name_gta4(virtual_data, _r_u32(virtual_data, tex_off + 0x14))
+        width = _r_u16(virtual_data, tex_off + 0x1C)
+        height = _r_u16(virtual_data, tex_off + 0x1E)
+        format_val = _r_u32(virtual_data, tex_off + 0x20)
+        mip_levels = virtual_data[tex_off + 0x27]
+
+        fmt = RSC5_TO_BC.get(format_val)
+        data_size = total_mip_data_size(width, height, fmt, mip_levels) if fmt is not None else 0
+
+        result.append({
+            "name": name, "width": width, "height": height,
+            "format": fmt,
+            "format_name": fmt.name if fmt is not None else f"unknown(0x{format_val:08X})",
+            "mip_count": mip_levels, "data_size": data_size,
+        })
+
+    return result

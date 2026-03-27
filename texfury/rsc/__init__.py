@@ -8,6 +8,9 @@ DAT_VIRTUAL_BASE: int = 0x50000000
 DAT_PHYSICAL_BASE: int = 0x60000000
 DAT_BASE_SIZE: int = 0x2000
 
+from texfury.rsc.rsc5 import (  # noqa: E402, F401
+    RSC5_MAGIC, build_rsc5, decompress_rsc5,
+)
 from texfury.rsc.rsc7 import (  # noqa: E402, F401
     RSC7_MAGIC, build_rsc7, decompress_rsc7, parse_rsc7_header,
 )

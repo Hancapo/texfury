@@ -153,6 +153,30 @@ BC_TO_RSC8: dict[BCFormat, int] = {
 RSC8_TO_BC: dict[int, BCFormat] = {v: k for k, v in BC_TO_RSC8.items()}
 
 
+# RSC5 texture format codes (GTA IV WTD — FourCC / D3DFMT uint32 values)
+class Rsc5TextureFormat(IntEnum):
+    DXT1 = 0x31545844
+    DXT3 = 0x33545844
+    DXT5 = 0x35545844
+    A8R8G8B8 = 21
+    L8 = 50
+
+BC_TO_RSC5: dict[BCFormat, int] = {
+    BCFormat.BC1: Rsc5TextureFormat.DXT1,
+    BCFormat.BC3: Rsc5TextureFormat.DXT5,
+    BCFormat.A8R8G8B8: Rsc5TextureFormat.A8R8G8B8,
+}
+
+RSC5_TO_BC: dict[int, BCFormat] = {
+    Rsc5TextureFormat.DXT1: BCFormat.BC1,
+    Rsc5TextureFormat.DXT5: BCFormat.BC3,
+    Rsc5TextureFormat.A8R8G8B8: BCFormat.A8R8G8B8,
+}
+
+# Formats NOT supported by GTA IV: BC4, BC5, BC7
+_GTA4_UNSUPPORTED = frozenset({BCFormat.BC4, BCFormat.BC5, BCFormat.BC7})
+
+
 def row_pitch(width: int, fmt: BCFormat) -> int:
     """Bytes per row (of blocks for BC, of pixels for uncompressed)."""
     if fmt == BCFormat.A8R8G8B8:
