@@ -25,3 +25,12 @@ native/..texfury*
 # IDE
 .vscode/
 .idea/
+
+# Vanilla game files (proprietary — not for distribution)
+*.wtd
+*.ytd
+tests/fixtures/
+
+# Oodle DLL (proprietary — users must supply their own)
+oo2core_*.dll
+texfury/oo2core_*.dll
