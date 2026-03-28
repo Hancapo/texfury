@@ -24,8 +24,11 @@ class TestFromImage:
         tex = Texture.from_image(str(png_64), format=BCFormat.BC1, name="custom")
         assert tex.name == "custom"
 
-    def test_all_bc_formats(self, png_64):
-        for fmt in BCFormat:
+    def test_all_native_formats(self, png_64):
+        """Test all formats supported by the native compressor."""
+        native_formats = (BCFormat.BC1, BCFormat.BC3, BCFormat.BC4,
+                          BCFormat.BC5, BCFormat.BC7, BCFormat.A8R8G8B8)
+        for fmt in native_formats:
             tex = Texture.from_image(str(png_64), format=fmt)
             assert tex.format == fmt
             assert tex.width == 64

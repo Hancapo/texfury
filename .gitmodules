@@ -1,0 +1,6 @@
+[submodule "native/vendor/bc7enc_rdo"]
+	path = native/vendor/bc7enc_rdo
+	url = https://github.com/richgel999/bc7enc_rdo.git
+[submodule "native/vendor/stb"]
+	path = native/vendor/stb
+	url = https://github.com/nothings/stb.git

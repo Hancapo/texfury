@@ -15,19 +15,21 @@ if not exist "%VCVARS%" (
 call "%VCVARS%" >nul 2>&1
 
 :: ── Paths ────────────────────────────────────────────────────────────────────
-set "REPO=%~dp0..\..\rageAm\projects\app\vendor"
-set "STB=%REPO%\stb_image"
-set "BC7=%REPO%\bc7enc_rdo"
+set "VENDOR=%~dp0vendor"
+set "STB=%VENDOR%\stb"
+set "BC7=%VENDOR%\bc7enc_rdo"
 set "OUT=%~dp0..\texfury"
 
 :: ── Compile ──────────────────────────────────────────────────────────────────
 echo Building texfury_native.dll ...
 
 cl /nologo /LD /EHsc /O2 /DNDEBUG /DWIN32 /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS ^
+   /DSUPPORT_BC7E=1 ^
    /std:c++17 ^
    /I"%STB%" /I"%BC7%" ^
    "%~dp0texfury_native.cpp" ^
-   "%BC7%\rgbcx.cpp" "%BC7%\bc7decomp.cpp" ^
+   "%BC7%\rgbcx.cpp" "%BC7%\bc7decomp.cpp" "%BC7%\bc7decomp_ref.cpp" "%BC7%\bc7enc.cpp" ^
+   "%BC7%\rdo_bc_encoder.cpp" "%BC7%\ert.cpp" "%BC7%\utils.cpp" "%BC7%\lodepng.cpp" ^
    "%BC7%\bc7e.obj" "%BC7%\bc7e_avx.obj" "%BC7%\bc7e_avx2.obj" ^
    "%BC7%\bc7e_sse2.obj" "%BC7%\bc7e_sse4.obj" ^
    /Fe:"%OUT%\texfury_native.dll" ^
