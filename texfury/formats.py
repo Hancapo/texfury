@@ -3,6 +3,13 @@
 from enum import IntEnum
 
 
+class RscCompression(IntEnum):
+    """Compression algorithm for RSC (RAGE resource) containers."""
+
+    DEFLATE = 1  # zlib raw deflate — used by GTA V Legacy, GTA V Enhanced
+    OODLE = 2    # Oodle Kraken — used by RDR2 vanilla files
+
+
 class BCFormat(IntEnum):
     """Block compression formats for DDS textures."""
 

@@ -1,7 +1,7 @@
 """Test that all public API is importable and consistent."""
 
 from texfury import (
-    BCFormat, MipFilter, suggest_format,
+    BCFormat, MipFilter, RscCompression, suggest_format,
     Texture,
     Game, ITD,
     create_dict_from_folder, batch_convert, extract_dict,
@@ -34,6 +34,12 @@ def test_bcformat_values():
     assert BCFormat.BC5.value == 3
     assert BCFormat.BC7.value == 4
     assert BCFormat.A8R8G8B8.value == 5
+
+
+def test_rsc_compression_values():
+    assert RscCompression.DEFLATE.value == 1
+    assert RscCompression.OODLE.value == 2
+    assert len(RscCompression) == 2
 
 
 def test_mipfilter_values():

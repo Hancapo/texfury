@@ -7,12 +7,10 @@ import struct
 import zlib
 from pathlib import Path
 
+from texfury.formats import RscCompression
+
 RSC8_MAGIC: int = 0x38435352  # "RSC8" LE
 RSC8_VERSION_YTD: int = 2
-
-# Compressor IDs extracted from RSC8 version field bits 8-12.
-_COMPRESSOR_DEFLATE: int = 1
-_COMPRESSOR_OODLE: int = 2
 
 
 def _align(offset: int, alignment: int) -> int:
@@ -153,7 +151,7 @@ def _parse_compressor_id(version_field: int) -> int:
     return ((version_field >> 8) & 0x1F) + 1
 
 
-def _encode_version(version: int, compressor_id: int = _COMPRESSOR_DEFLATE) -> int:
+def _encode_version(version: int, compressor_id: int = RscCompression.DEFLATE) -> int:
     """Encode version + compressor ID into the RSC8 version field."""
     return (version & 0xFF) | (((compressor_id - 1) & 0x1F) << 8)
 
@@ -162,11 +160,11 @@ def _encode_version(version: int, compressor_id: int = _COMPRESSOR_DEFLATE) -> i
 
 def build_rsc8(virtual_data: bytes, physical_data: bytes,
                version: int = RSC8_VERSION_YTD, *,
-               use_oodle: bool = True) -> bytes:
+               compression: RscCompression = RscCompression.OODLE) -> bytes:
     """Compress and wrap virtual + physical data into an RSC8 resource.
 
     Uses Oodle Kraken compression by default (matching RDR2 vanilla files).
-    Falls back to deflate if Oodle DLL is not available or *use_oodle* is False.
+    Falls back to deflate if Oodle DLL is not available.
     """
     v_size = len(virtual_data)
     p_size = len(physical_data)
@@ -180,16 +178,16 @@ def build_rsc8(virtual_data: bytes, physical_data: bytes,
     padded = virtual_data.ljust(v_aligned, b"\x00")
     padded += physical_data.ljust(p_aligned, b"\x00")
 
-    if use_oodle:
+    if compression == RscCompression.OODLE:
         try:
             compressed = _oodle_compress(padded)
-            compressor_id = _COMPRESSOR_OODLE
+            compressor_id = RscCompression.OODLE
         except (RuntimeError, OSError):
             compressed = _deflate_compress(padded)
-            compressor_id = _COMPRESSOR_DEFLATE
+            compressor_id = RscCompression.DEFLATE
     else:
         compressed = _deflate_compress(padded)
-        compressor_id = _COMPRESSOR_DEFLATE
+        compressor_id = RscCompression.DEFLATE
 
     version_field = _encode_version(version, compressor_id)
     header = struct.pack("<IIII", RSC8_MAGIC, version_field, v_flags, p_flags)
@@ -218,7 +216,7 @@ def decompress_rsc8(data: bytes) -> tuple[bytes, bytes]:
     compressor = _parse_compressor_id(version_field)
     payload = data[16:]
 
-    if compressor == _COMPRESSOR_OODLE:
+    if compressor == RscCompression.OODLE:
         raw = _oodle_decompress(payload, total_size)
     else:
         raw = _deflate_decompress(payload, total_size)

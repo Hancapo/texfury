@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from texfury.formats import (
-    BCFormat, MipFilter,
+    BCFormat, MipFilter, RscCompression,
     BC_TO_DX9, DX9_TO_BC, FOURCC_TO_BC, DXGI_TO_BC,
     BC_TO_RSC8, RSC8_TO_BC,
     BC_TO_RSC5, RSC5_TO_BC, _GTA4_UNSUPPORTED,
@@ -228,15 +228,24 @@ class ITD:
 
     # ── I/O ─────────────────────────────────────────────────────────────
 
-    def save(self, path: str | Path) -> None:
-        """Build and write the texture dictionary to a file."""
-        builders = {
-            Game.GTA4: _build_gta4,
-            Game.GTA5: _build_gtav,
-            Game.GTA5_GEN9: _build_enhanced,
-            Game.RDR2: _build_rdr2,
-        }
-        data = builders[self._game](self._textures)
+    def save(self, path: str | Path, *,
+             compression: RscCompression | None = None) -> None:
+        """Build and write the texture dictionary to a file.
+
+        *compression* only applies to RDR2 (RSC8).  Defaults to
+        :attr:`RscCompression.OODLE` for RDR2 and is ignored for other games.
+        """
+        if self._game == Game.RDR2:
+            if compression is None:
+                compression = RscCompression.OODLE
+            data = _build_rdr2(self._textures, compression=compression)
+        else:
+            builders = {
+                Game.GTA4: _build_gta4,
+                Game.GTA5: _build_gtav,
+                Game.GTA5_GEN9: _build_enhanced,
+            }
+            data = builders[self._game](self._textures)
         Path(path).write_bytes(data)
 
     @staticmethod
@@ -354,12 +363,16 @@ def create_dict_from_folder(
     generate_mipmaps: bool = True,
     min_mip_size: int = 4,
     mip_filter: MipFilter = MipFilter.MITCHELL,
+    compression: RscCompression | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> ITD:
     """Create a texture dictionary from all images in a folder.
 
     If *output* is given the dictionary is saved to disk immediately.
     Otherwise it is only built in memory — call ``td.save(path)`` later.
+
+    *compression* only applies to RDR2 (RSC8).  Defaults to
+    :attr:`RscCompression.OODLE` for RDR2 and is ignored for other games.
 
     Returns the populated :class:`ITD`.
     """
@@ -369,7 +382,7 @@ def create_dict_from_folder(
         mip_filter=mip_filter, on_progress=on_progress,
     )
     if output is not None:
-        td.save(output)
+        td.save(output, compression=compression)
     return td
 
 
@@ -635,7 +648,7 @@ _RDR2_DIM_2D         = 1
 _RDR2_SRV_DIM_2D     = 0x0401
 
 
-def _build_rdr2(textures: list[Texture]) -> bytes:
+def _build_rdr2(textures: list[Texture], compression: RscCompression = RscCompression.OODLE) -> bytes:
     entries = sorted(textures, key=lambda t: _joaat(t.name))
     n = len(entries)
     if n == 0:
@@ -748,7 +761,7 @@ def _build_rdr2(textures: list[Texture]) -> bytes:
     for i, data in enumerate(phys_data_list):
         pbuf[phys_offsets[i]:phys_offsets[i] + len(data)] = data
 
-    return build_rsc8(bytes(vbuf), bytes(pbuf))
+    return build_rsc8(bytes(vbuf), bytes(pbuf), compression=compression)
 
 
 def _parse_rdr2(file_data: bytes) -> ITD:

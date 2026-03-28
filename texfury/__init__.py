@@ -1,6 +1,6 @@
 """texfury — Fast image-to-DDS conversion and texture dictionary toolkit."""
 
-from texfury.formats import BCFormat, MipFilter, suggest_format
+from texfury.formats import BCFormat, MipFilter, RscCompression, suggest_format
 from texfury.texture import Texture
 from texfury.texture_dict import (
     Game,
@@ -26,6 +26,7 @@ __version__ = "1.4.0"
 __all__ = [
     "BCFormat",
     "MipFilter",
+    "RscCompression",
     "suggest_format",
     "Texture",
     "Game",

@@ -1,5 +1,8 @@
 """Test RSC resource format modules."""
 
+import struct
+
+from texfury.formats import RscCompression
 from texfury.rsc import (
     DAT_VIRTUAL_BASE, DAT_PHYSICAL_BASE, DAT_BASE_SIZE,
     RSC5_MAGIC, build_rsc5, decompress_rsc5,
@@ -49,10 +52,38 @@ class TestRSC7:
 
 
 class TestRSC8:
-    def test_round_trip(self):
+    def test_round_trip_deflate(self):
         vdata = b"\x11" * 512
         pdata = b"\x22" * 1024
-        packed = build_rsc8(vdata, pdata)
+        packed = build_rsc8(vdata, pdata, compression=RscCompression.DEFLATE)
         v_out, p_out = decompress_rsc8(packed)
         assert v_out[:len(vdata)] == vdata
         assert p_out[:len(pdata)] == pdata
+
+    def test_round_trip_oodle(self):
+        vdata = b"\x11" * 512
+        pdata = b"\x22" * 1024
+        packed = build_rsc8(vdata, pdata, compression=RscCompression.OODLE)
+        v_out, p_out = decompress_rsc8(packed)
+        assert v_out[:len(vdata)] == vdata
+        assert p_out[:len(pdata)] == pdata
+
+    def test_deflate_compressor_id(self):
+        packed = build_rsc8(b"\x00" * 64, b"\x00" * 64,
+                            compression=RscCompression.DEFLATE)
+        version_field = struct.unpack_from("<I", packed, 4)[0]
+        compressor = ((version_field >> 8) & 0x1F) + 1
+        assert compressor == RscCompression.DEFLATE
+
+    def test_oodle_compressor_id(self):
+        packed = build_rsc8(b"\x00" * 64, b"\x00" * 64,
+                            compression=RscCompression.OODLE)
+        version_field = struct.unpack_from("<I", packed, 4)[0]
+        compressor = ((version_field >> 8) & 0x1F) + 1
+        assert compressor == RscCompression.OODLE
+
+    def test_default_compression_is_oodle(self):
+        packed = build_rsc8(b"\x00" * 64, b"\x00" * 64)
+        version_field = struct.unpack_from("<I", packed, 4)[0]
+        compressor = ((version_field >> 8) & 0x1F) + 1
+        assert compressor == RscCompression.OODLE
