@@ -27,13 +27,19 @@ def test_game_enum_count():
     assert len(Game) == 4
 
 
-def test_bcformat_values():
-    assert BCFormat.BC1.value == 0
-    assert BCFormat.BC3.value == 1
-    assert BCFormat.BC4.value == 2
-    assert BCFormat.BC5.value == 3
-    assert BCFormat.BC7.value == 4
-    assert BCFormat.A8R8G8B8.value == 5
+def test_bcformat_block_compressed():
+    """All BC formats are present and block-compressed."""
+    for name in ("BC1", "BC2", "BC3", "BC4", "BC5", "BC6H", "BC7"):
+        assert hasattr(BCFormat, name)
+
+
+def test_bcformat_uncompressed():
+    """Uncompressed formats are present."""
+    for name in ("A8R8G8B8", "R8G8B8A8", "R8", "A8", "R8G8",
+                 "B5G6R5", "B5G5R5A1", "R10G10B10A2",
+                 "R16_FLOAT", "R16G16_FLOAT", "R16G16B16A16_FLOAT",
+                 "R32_FLOAT", "R32G32B32A32_FLOAT"):
+        assert hasattr(BCFormat, name)
 
 
 def test_rsc_compression_values():

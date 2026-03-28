@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from texfury import _native as native
-from texfury.formats import BCFormat, MipFilter, BC_TO_DXGI, BC_TO_FOURCC, is_block_compressed
+from texfury.formats import (
+    BCFormat, MipFilter, BC_TO_DXGI, BC_TO_FOURCC, FOURCC_DX10,
+    is_block_compressed, pixel_byte_size, row_pitch,
+)
 
 if TYPE_CHECKING:
     pass
@@ -85,7 +88,12 @@ class Texture:
     @property
     def has_alpha_format(self) -> bool:
         """True if the compression format supports an alpha channel."""
-        return self._format in (BCFormat.BC3, BCFormat.BC7, BCFormat.A8R8G8B8)
+        return self._format in (
+            BCFormat.BC2, BCFormat.BC3, BCFormat.BC7,
+            BCFormat.A8R8G8B8, BCFormat.R8G8B8A8, BCFormat.A8,
+            BCFormat.B5G5R5A1, BCFormat.R10G10B10A2,
+            BCFormat.R16G16B16A16_FLOAT, BCFormat.R32G32B32A32_FLOAT,
+        )
 
     def has_transparency(self) -> bool:
         """Check if the texture has any non-opaque pixels.
@@ -485,26 +493,34 @@ def _build_dds_bytes(width: int, height: int, fmt: BCFormat,
                      mip_count: int, mip_sizes: list[int],
                      pixel_data: bytes) -> bytes:
     """Build a complete DDS file from pixel data."""
-    uncompressed = not is_block_compressed(fmt)
-    use_dx10 = (not uncompressed) and fmt in (BCFormat.BC4, BCFormat.BC5, BCFormat.BC7)
+    compressed = is_block_compressed(fmt)
+
+    # Formats that can be expressed with legacy DDS FourCC (no DX10 header needed)
+    legacy_fourcc = BC_TO_FOURCC.get(fmt)
+
+    # A8R8G8B8 uses legacy pixel format masks (no FourCC, no DX10)
+    legacy_uncompressed = fmt == BCFormat.A8R8G8B8
+
+    # Everything else needs the DX10 extended header
+    use_dx10 = not legacy_fourcc and not legacy_uncompressed
 
     hdr = bytearray(124)
     struct.pack_into("<I", hdr, 0, 124)  # size
 
-    if uncompressed:
-        flags = _DDSD_CAPS | _DDSD_HEIGHT | _DDSD_WIDTH | _DDSD_PIXELFORMAT | _DDSD_PITCH
-    else:
+    if compressed:
         flags = _DDSD_CAPS | _DDSD_HEIGHT | _DDSD_WIDTH | _DDSD_PIXELFORMAT | _DDSD_LINEARSIZE
+    else:
+        flags = _DDSD_CAPS | _DDSD_HEIGHT | _DDSD_WIDTH | _DDSD_PIXELFORMAT | _DDSD_PITCH
     if mip_count > 1:
         flags |= _DDSD_MIPMAPCOUNT
     struct.pack_into("<I", hdr, 4, flags)
     struct.pack_into("<I", hdr, 8, height)
     struct.pack_into("<I", hdr, 12, width)
 
-    if uncompressed:
-        struct.pack_into("<I", hdr, 16, width * 4)  # row pitch
-    else:
+    if compressed:
         struct.pack_into("<I", hdr, 16, mip_sizes[0] if mip_sizes else 0)
+    else:
+        struct.pack_into("<I", hdr, 16, row_pitch(width, fmt))
 
     struct.pack_into("<I", hdr, 20, 1)  # depth
     struct.pack_into("<I", hdr, 24, mip_count)
@@ -513,21 +529,20 @@ def _build_dds_bytes(width: int, height: int, fmt: BCFormat,
     # Pixel format at header offset 72
     struct.pack_into("<I", hdr, 72, 32)   # pf.size
 
-    if uncompressed:
+    if legacy_uncompressed:
         struct.pack_into("<I", hdr, 76, _DDPF_RGB | _DDPF_ALPHAPIXELS)
         struct.pack_into("<I", hdr, 84, 32)          # rgbBitCount
         struct.pack_into("<I", hdr, 88, 0x00FF0000)  # rBitMask
         struct.pack_into("<I", hdr, 92, 0x0000FF00)  # gBitMask
         struct.pack_into("<I", hdr, 96, 0x000000FF)  # bBitMask
         struct.pack_into("<I", hdr, 100, 0xFF000000)  # aBitMask
-    else:
+    elif legacy_fourcc:
         struct.pack_into("<I", hdr, 76, _DDPF_FOURCC)
-        if use_dx10:
-            struct.pack_into("<I", hdr, 80, 0x30315844)  # "DX10"
-        elif fmt == BCFormat.BC1:
-            struct.pack_into("<I", hdr, 80, 0x31545844)  # "DXT1"
-        else:
-            struct.pack_into("<I", hdr, 80, 0x35545844)  # "DXT5"
+        struct.pack_into("<I", hdr, 80, legacy_fourcc)
+    else:
+        # DX10 extended header — covers BC4, BC5, BC6H, BC7, and all new formats
+        struct.pack_into("<I", hdr, 76, _DDPF_FOURCC)
+        struct.pack_into("<I", hdr, 80, FOURCC_DX10)
 
     caps = _DDSCAPS_TEXTURE
     if mip_count > 1:

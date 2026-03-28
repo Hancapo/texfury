@@ -93,8 +93,11 @@ class TestDecompression:
             assert h == max(1, tex.height // 2)
             assert len(rgba) == w * h * 4
 
-    def test_all_formats_decompress(self, png_64):
-        for fmt in BCFormat:
+    def test_all_native_formats_decompress(self, png_64):
+        """Test decompression for all formats supported by the native compressor."""
+        native_formats = (BCFormat.BC1, BCFormat.BC3, BCFormat.BC4,
+                          BCFormat.BC5, BCFormat.BC7, BCFormat.A8R8G8B8)
+        for fmt in native_formats:
             tex = Texture.from_image(str(png_64), format=fmt)
             rgba, w, h = tex.to_rgba()
             assert len(rgba) == w * h * 4
