@@ -135,11 +135,15 @@ def suggest_format(has_alpha: bool, *, normal_map: bool = False,
 # RSC8 texture format codes (DXGI-like byte values, used in RDR2 YTD)
 class Rsc8TextureFormat(IntEnum):
     BC1_UNORM = 0x47
+    BC1_UNORM_SRGB = 0x48
     BC3_UNORM = 0x4D
+    BC3_UNORM_SRGB = 0x4E
     BC4_UNORM = 0x50
     BC5_UNORM = 0x53
     BC7_UNORM = 0x62
+    BC7_UNORM_SRGB = 0x63
     B8G8R8A8_UNORM = 0x57
+    B8G8R8A8_UNORM_SRGB = 0x5B
 
 BC_TO_RSC8: dict[BCFormat, int] = {
     BCFormat.BC1: Rsc8TextureFormat.BC1_UNORM,
@@ -151,6 +155,12 @@ BC_TO_RSC8: dict[BCFormat, int] = {
 }
 
 RSC8_TO_BC: dict[int, BCFormat] = {v: k for k, v in BC_TO_RSC8.items()}
+
+# SRGB variants map to the same BCFormat (same block encoding, different color space)
+RSC8_TO_BC[Rsc8TextureFormat.BC1_UNORM_SRGB] = BCFormat.BC1
+RSC8_TO_BC[Rsc8TextureFormat.BC3_UNORM_SRGB] = BCFormat.BC3
+RSC8_TO_BC[Rsc8TextureFormat.BC7_UNORM_SRGB] = BCFormat.BC7
+RSC8_TO_BC[Rsc8TextureFormat.B8G8R8A8_UNORM_SRGB] = BCFormat.A8R8G8B8
 
 
 # RSC5 texture format codes (GTA IV WTD — FourCC / D3DFMT uint32 values)
