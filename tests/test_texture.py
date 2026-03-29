@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from texfury import Texture, BCFormat, MipFilter
+from texfury.texture_dict import ITD, Game
 
 
 class TestFromImage:
@@ -202,6 +203,59 @@ class TestUncompressedFormats:
         orig = Texture.from_image(str(png_64), format=BCFormat.R8G8B8A8,
                                   generate_mipmaps=False)
         assert tex.data == orig.data
+
+
+class TestFixTextures:
+    def test_opaque_bc3_to_bc1(self, png_64):
+        """Opaque texture in BC3 should be fixed to BC1."""
+        tex = Texture.from_image(str(png_64), format=BCFormat.BC3, name="opaque")
+        td = ITD(game=Game.GTA5)
+        td.add(tex)
+        report = td.fix_textures()
+        assert len(report) == 1
+        assert "BC3→BC1" in report[0]["fixes"][0]
+        assert td.textures[0].format == BCFormat.BC1
+
+    def test_transparent_bc1_to_bc3(self, png_transparent):
+        """Transparent texture in BC1 should be fixed to BC3."""
+        tex = Texture.from_image(str(png_transparent), format=BCFormat.BC1, name="alpha")
+        td = ITD(game=Game.GTA5)
+        td.add(tex)
+        report = td.fix_textures()
+        assert len(report) == 1
+        assert "BC1→BC3" in report[0]["fixes"][0]
+        assert td.textures[0].format == BCFormat.BC3
+
+    def test_missing_mipmaps(self, png_64):
+        """Texture with 1 mip on a 64x64 should get mipmaps added."""
+        tex = Texture.from_image(str(png_64), format=BCFormat.BC1,
+                                 generate_mipmaps=False, name="nomips")
+        td = ITD(game=Game.GTA5)
+        td.add(tex)
+        assert td.textures[0].mip_count == 1
+        report = td.fix_textures()
+        assert len(report) == 1
+        assert any("mipmaps" in f for f in report[0]["fixes"])
+        assert td.textures[0].mip_count > 1
+
+    def test_already_correct(self, png_64):
+        """Texture that's already fine should not be modified."""
+        tex = Texture.from_image(str(png_64), format=BCFormat.BC1, name="good")
+        td = ITD(game=Game.GTA5)
+        td.add(tex)
+        report = td.fix_textures()
+        assert len(report) == 0
+
+    def test_returns_report(self, png_64, png_transparent):
+        """Report lists only modified textures."""
+        t1 = Texture.from_image(str(png_64), format=BCFormat.BC1, name="ok")
+        t2 = Texture.from_image(str(png_transparent), format=BCFormat.BC1, name="fix_me")
+        td = ITD(game=Game.GTA5)
+        td.add(t1)
+        td.add(t2)
+        report = td.fix_textures()
+        assert len(report) == 1
+        assert report[0]["name"] == "fix_me"
 
 
 class TestValidate:

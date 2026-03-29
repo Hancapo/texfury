@@ -330,6 +330,104 @@ class ITD:
         }
         return inspectors[game](file_data)
 
+    # ── Fix / optimize ───────────────────────────────────────────────
+
+    def fix_textures(
+        self,
+        *,
+        quality: float = 0.7,
+        min_mip_size: int = 4,
+        mip_filter: MipFilter = MipFilter.MITCHELL,
+        on_progress: Callable[[int, int, str], None] | None = None,
+    ) -> list[dict]:
+        """Fix common texture issues in-place.
+
+        For each texture, checks and corrects:
+        - **Non-power-of-two** dimensions → resized to nearest POT.
+        - **Missing mipmaps** → regenerated (expected mips for ≥8×8 textures).
+        - **Format choice** → BC1 for opaque textures, BC3 for transparent
+          (only if current format is a BC type that doesn't match).
+
+        Returns a list of dicts describing what was fixed, one per
+        texture that was modified.  Unmodified textures are omitted.
+
+        Parameters
+        ----------
+        quality : float
+            Compression quality for recompressed textures.
+        min_mip_size : int
+            Minimum dimension for the smallest mip level.
+        mip_filter : MipFilter
+            Downsampling filter for mipmap generation and POT resize.
+        on_progress : callable, optional
+            ``(current, total, texture_name)`` callback.
+        """
+        from texfury import _native as native
+
+        report: list[dict] = []
+        total = len(self._textures)
+
+        for idx, tex in enumerate(self._textures):
+            if on_progress:
+                on_progress(idx + 1, total, tex.name)
+
+            fixes: list[str] = []
+
+            # Determine expected mip count
+            w, h = tex.width, tex.height
+            expected_mips = 1
+            dim = max(w, h)
+            while dim > min_mip_size:
+                dim //= 2
+                expected_mips += 1
+
+            needs_pot = not tex.is_power_of_two
+            needs_mips = tex.mip_count < expected_mips and max(w, h) >= 8
+
+            # Only suggest format change for BC formats
+            needs_format = False
+            suggested_fmt = tex.format
+            if is_block_compressed(tex.format):
+                transparent = tex.has_transparency()
+                if transparent and tex.format == BCFormat.BC1:
+                    suggested_fmt = BCFormat.BC3
+                    needs_format = True
+                    fixes.append(f"format BC1→BC3 (has transparency)")
+                elif not transparent and tex.format in (BCFormat.BC3, BCFormat.BC7):
+                    suggested_fmt = BCFormat.BC1
+                    needs_format = True
+                    fixes.append(f"format {tex.format.name}→BC1 (opaque)")
+
+            if needs_pot:
+                fixes.append("resize to power-of-two")
+            if needs_mips:
+                fixes.append(f"mipmaps {tex.mip_count}→{expected_mips}")
+
+            if not fixes:
+                continue
+
+            # Decompress → recompress with fixes
+            rgba, rw, rh = tex.to_rgba(0)
+            img = native.create_image(rw, rh, rgba)
+            try:
+                new_tex = Texture._compress_image(
+                    img,
+                    format=suggested_fmt,
+                    quality=quality,
+                    generate_mipmaps=True,
+                    min_mip_size=min_mip_size,
+                    resize_to_pot=True,
+                    mip_filter=mip_filter,
+                    name=tex.name,
+                )
+            finally:
+                native.free_image(img)
+
+            self._textures[idx] = new_tex
+            report.append({"name": tex.name, "fixes": fixes})
+
+        return report
+
     # ── Dunder ──────────────────────────────────────────────────────────
 
     def __len__(self) -> int:
