@@ -61,13 +61,33 @@ struct TfCompressed {
 };
 
 // ── Enums ────────────────────────────────────────────────────────────────────
+// Values MUST match Python BCFormat IntEnum exactly.
 enum TfBCFormat {
+    // ABI-locked (0-5) — used by rdo_bc_encoder
     TF_BC1 = 0,
     TF_BC3 = 1,
     TF_BC4 = 2,
     TF_BC5 = 3,
     TF_BC7 = 4,
-    TF_A8R8G8B8 = 5,  // Uncompressed 32-bit BGRA
+    TF_A8R8G8B8 = 5,     // Uncompressed 32-bit BGRA
+    // New block-compressed (not supported by rdo_bc_encoder)
+    TF_BC2 = 6,
+    TF_BC6H = 7,
+    // Uncompressed — 32-bit
+    TF_R8G8B8A8 = 10,
+    TF_B5G6R5 = 11,
+    TF_B5G5R5A1 = 12,
+    TF_R10G10B10A2 = 13,
+    // Uncompressed — small
+    TF_R8 = 20,
+    TF_A8 = 21,
+    TF_R8G8 = 22,
+    // Uncompressed — float/HDR
+    TF_R16_FLOAT = 30,
+    TF_R16G16_FLOAT = 31,
+    TF_R16G16B16A16_FLOAT = 32,
+    TF_R32_FLOAT = 33,
+    TF_R32G32B32A32_FLOAT = 34,
 };
 
 enum TfMipFilter {
@@ -105,25 +125,50 @@ static void ensure_init() {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 static bool is_block_compressed(TfBCFormat fmt) {
-    return fmt != TF_A8R8G8B8;
+    switch (fmt) {
+        case TF_BC1: case TF_BC2: case TF_BC3:
+        case TF_BC4: case TF_BC5: case TF_BC6H: case TF_BC7:
+            return true;
+        default:
+            return false;
+    }
 }
 
 static int block_byte_size(TfBCFormat fmt) {
     switch (fmt) {
         case TF_BC1: case TF_BC4: return 8;
-        default: return 16;
+        default: return 16; // BC2, BC3, BC5, BC6H, BC7
+    }
+}
+
+static int pixel_byte_size(TfBCFormat fmt) {
+    switch (fmt) {
+        case TF_A8R8G8B8: case TF_R8G8B8A8: case TF_R10G10B10A2:
+        case TF_R16G16_FLOAT: case TF_R32_FLOAT:
+            return 4;
+        case TF_B5G6R5: case TF_B5G5R5A1: case TF_R8G8:
+        case TF_R16_FLOAT:
+            return 2;
+        case TF_R8: case TF_A8:
+            return 1;
+        case TF_R16G16B16A16_FLOAT:
+            return 8;
+        case TF_R32G32B32A32_FLOAT:
+            return 16;
+        default:
+            return 4;
     }
 }
 
 static size_t calc_mip_size(int w, int h, TfBCFormat fmt) {
-    if (fmt == TF_A8R8G8B8) {
-        return (size_t)w * h * 4;
+    if (is_block_compressed(fmt)) {
+        int bw = (w + 3) / 4;
+        int bh = (h + 3) / 4;
+        if (bw < 1) bw = 1;
+        if (bh < 1) bh = 1;
+        return (size_t)bw * bh * block_byte_size(fmt);
     }
-    int bw = (w + 3) / 4;
-    int bh = (h + 3) / 4;
-    if (bw < 1) bw = 1;
-    if (bh < 1) bh = 1;
-    return (size_t)bw * bh * block_byte_size(fmt);
+    return (size_t)w * h * pixel_byte_size(fmt);
 }
 
 static int calc_mip_count(int w, int h, int min_dim) {
@@ -144,15 +189,29 @@ static uint32_t next_pot(uint32_t v) {
     return v + 1;
 }
 
-// Map TfBCFormat → DXGI_FORMAT for rdo_bc_encoder
+// Map TfBCFormat → DXGI_FORMAT
 static DXGI_FORMAT tf_to_dxgi(TfBCFormat fmt) {
     switch (fmt) {
         case TF_BC1: return DXGI_FORMAT_BC1_UNORM;
+        case TF_BC2: return DXGI_FORMAT_BC2_UNORM;
         case TF_BC3: return DXGI_FORMAT_BC3_UNORM;
         case TF_BC4: return DXGI_FORMAT_BC4_UNORM;
         case TF_BC5: return DXGI_FORMAT_BC5_UNORM;
+        case TF_BC6H: return DXGI_FORMAT_BC6H_UF16;
         case TF_BC7: return DXGI_FORMAT_BC7_UNORM;
         case TF_A8R8G8B8: return DXGI_FORMAT_B8G8R8A8_UNORM;
+        case TF_R8G8B8A8: return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case TF_B5G6R5: return (DXGI_FORMAT)85;   // DXGI_FORMAT_B5G6R5_UNORM
+        case TF_B5G5R5A1: return (DXGI_FORMAT)86;  // DXGI_FORMAT_B5G5R5A1_UNORM
+        case TF_R10G10B10A2: return (DXGI_FORMAT)24; // DXGI_FORMAT_R10G10B10A2_UNORM
+        case TF_R8: return (DXGI_FORMAT)61;         // DXGI_FORMAT_R8_UNORM
+        case TF_A8: return (DXGI_FORMAT)65;         // DXGI_FORMAT_A8_UNORM
+        case TF_R8G8: return (DXGI_FORMAT)49;       // DXGI_FORMAT_R8G8_UNORM
+        case TF_R16_FLOAT: return (DXGI_FORMAT)54;  // DXGI_FORMAT_R16_FLOAT
+        case TF_R16G16_FLOAT: return (DXGI_FORMAT)34; // DXGI_FORMAT_R16G16_FLOAT
+        case TF_R16G16B16A16_FLOAT: return (DXGI_FORMAT)10; // DXGI_FORMAT_R16G16B16A16_FLOAT
+        case TF_R32_FLOAT: return (DXGI_FORMAT)41;  // DXGI_FORMAT_R32_FLOAT
+        case TF_R32G32B32A32_FLOAT: return (DXGI_FORMAT)2; // DXGI_FORMAT_R32G32B32A32_FLOAT
         default: return DXGI_FORMAT_UNKNOWN;
     }
 }
@@ -161,12 +220,31 @@ static DXGI_FORMAT tf_to_dxgi(TfBCFormat fmt) {
 static int dxgi_to_tf(uint32_t dxgi) {
     switch (dxgi) {
         case DXGI_FORMAT_BC1_UNORM: return TF_BC1;
+        case 72: /* BC1_UNORM_SRGB */ return TF_BC1;
+        case DXGI_FORMAT_BC2_UNORM: return TF_BC2;
+        case 75: /* BC2_UNORM_SRGB */ return TF_BC2;
         case DXGI_FORMAT_BC3_UNORM: return TF_BC3;
+        case 78: /* BC3_UNORM_SRGB */ return TF_BC3;
         case DXGI_FORMAT_BC4_UNORM: return TF_BC4;
         case DXGI_FORMAT_BC5_UNORM: return TF_BC5;
+        case 95: /* BC6H_UF16 */ return TF_BC6H;
         case DXGI_FORMAT_BC7_UNORM: return TF_BC7;
+        case 99: /* BC7_UNORM_SRGB */ return TF_BC7;
         case DXGI_FORMAT_B8G8R8A8_UNORM: return TF_A8R8G8B8;
-        case DXGI_FORMAT_R8G8B8A8_UNORM: return TF_A8R8G8B8; // treat as same
+        case 91: /* B8G8R8A8_UNORM_SRGB */ return TF_A8R8G8B8;
+        case DXGI_FORMAT_R8G8B8A8_UNORM: return TF_R8G8B8A8;
+        case 29: /* R8G8B8A8_UNORM_SRGB */ return TF_R8G8B8A8;
+        case 85: return TF_B5G6R5;
+        case 86: return TF_B5G5R5A1;
+        case 24: return TF_R10G10B10A2;
+        case 61: return TF_R8;
+        case 65: return TF_A8;
+        case 49: return TF_R8G8;
+        case 54: return TF_R16_FLOAT;
+        case 34: return TF_R16G16_FLOAT;
+        case 10: return TF_R16G16B16A16_FLOAT;
+        case 41: return TF_R32_FLOAT;
+        case 2:  return TF_R32G32B32A32_FLOAT;
         default: return -1;
     }
 }
@@ -336,28 +414,145 @@ TF_API TfImage* tf_resize_to_pot(const TfImage* img, int filter) {
     return tf_resize(img, pw, ph, filter);
 }
 
+// ── Half-float conversion ────────────────────────────────────────────────────
+
+// IEEE 754 half-precision: 1 sign + 5 exponent + 10 mantissa
+static uint16_t float_to_half(float f) {
+    uint32_t x;
+    memcpy(&x, &f, 4);
+    uint32_t sign = (x >> 16) & 0x8000;
+    int32_t  exp  = ((x >> 23) & 0xFF) - 127 + 15;
+    uint32_t mant = x & 0x7FFFFF;
+    if (exp <= 0) return (uint16_t)sign;          // underflow → ±0
+    if (exp >= 31) return (uint16_t)(sign | 0x7C00); // overflow → ±inf
+    return (uint16_t)(sign | (exp << 10) | (mant >> 13));
+}
+
 // ── Compression (uses rdo_bc_encoder) ────────────────────────────────────────
 
-// Compress a single mip level using rdo_bc_encoder.
-// Returns malloc'd block data and sets *out_size.
+// Convert RGBA u8 pixels to the target uncompressed format.
+// Returns malloc'd buffer and sets *out_size. Returns nullptr on unsupported fmt.
+static uint8_t* convert_pixels(const uint8_t* rgba, int w, int h,
+                                TfBCFormat fmt, size_t* out_size) {
+    size_t px = (size_t)w * h;
+    size_t bpp = pixel_byte_size(fmt);
+    size_t sz = px * bpp;
+    uint8_t* dst = (uint8_t*)malloc(sz);
+    if (!dst) return nullptr;
+
+    switch (fmt) {
+    case TF_A8R8G8B8:
+        // RGBA → BGRA
+        for (size_t i = 0; i < px; i++) {
+            dst[i*4+0] = rgba[i*4+2];
+            dst[i*4+1] = rgba[i*4+1];
+            dst[i*4+2] = rgba[i*4+0];
+            dst[i*4+3] = rgba[i*4+3];
+        }
+        break;
+    case TF_R8G8B8A8:
+        memcpy(dst, rgba, sz);
+        break;
+    case TF_B5G6R5:
+        for (size_t i = 0; i < px; i++) {
+            uint16_t r = rgba[i*4+0] >> 3;
+            uint16_t g = rgba[i*4+1] >> 2;
+            uint16_t b = rgba[i*4+2] >> 3;
+            uint16_t v = (b) | (g << 5) | (r << 11);
+            memcpy(dst + i*2, &v, 2);
+        }
+        break;
+    case TF_B5G5R5A1:
+        for (size_t i = 0; i < px; i++) {
+            uint16_t r = rgba[i*4+0] >> 3;
+            uint16_t g = rgba[i*4+1] >> 3;
+            uint16_t b = rgba[i*4+2] >> 3;
+            uint16_t a = rgba[i*4+3] >= 128 ? 1 : 0;
+            uint16_t v = (b) | (g << 5) | (r << 10) | (a << 15);
+            memcpy(dst + i*2, &v, 2);
+        }
+        break;
+    case TF_R10G10B10A2:
+        for (size_t i = 0; i < px; i++) {
+            uint32_t r = (uint32_t)rgba[i*4+0] * 1023 / 255;
+            uint32_t g = (uint32_t)rgba[i*4+1] * 1023 / 255;
+            uint32_t b = (uint32_t)rgba[i*4+2] * 1023 / 255;
+            uint32_t a = (uint32_t)rgba[i*4+3] * 3 / 255;
+            uint32_t v = r | (g << 10) | (b << 20) | (a << 30);
+            memcpy(dst + i*4, &v, 4);
+        }
+        break;
+    case TF_R8:
+        for (size_t i = 0; i < px; i++)
+            dst[i] = rgba[i*4+0];
+        break;
+    case TF_A8:
+        for (size_t i = 0; i < px; i++)
+            dst[i] = rgba[i*4+3];
+        break;
+    case TF_R8G8:
+        for (size_t i = 0; i < px; i++) {
+            dst[i*2+0] = rgba[i*4+0];
+            dst[i*2+1] = rgba[i*4+1];
+        }
+        break;
+    case TF_R16_FLOAT:
+        for (size_t i = 0; i < px; i++) {
+            uint16_t v = float_to_half(rgba[i*4+0] / 255.0f);
+            memcpy(dst + i*2, &v, 2);
+        }
+        break;
+    case TF_R16G16_FLOAT:
+        for (size_t i = 0; i < px; i++) {
+            uint16_t r = float_to_half(rgba[i*4+0] / 255.0f);
+            uint16_t g = float_to_half(rgba[i*4+1] / 255.0f);
+            memcpy(dst + i*4, &r, 2);
+            memcpy(dst + i*4+2, &g, 2);
+        }
+        break;
+    case TF_R16G16B16A16_FLOAT:
+        for (size_t i = 0; i < px; i++) {
+            uint16_t ch[4];
+            for (int c = 0; c < 4; c++)
+                ch[c] = float_to_half(rgba[i*4+c] / 255.0f);
+            memcpy(dst + i*8, ch, 8);
+        }
+        break;
+    case TF_R32_FLOAT:
+        for (size_t i = 0; i < px; i++) {
+            float v = rgba[i*4+0] / 255.0f;
+            memcpy(dst + i*4, &v, 4);
+        }
+        break;
+    case TF_R32G32B32A32_FLOAT:
+        for (size_t i = 0; i < px; i++) {
+            float ch[4];
+            for (int c = 0; c < 4; c++)
+                ch[c] = rgba[i*4+c] / 255.0f;
+            memcpy(dst + i*16, ch, 16);
+        }
+        break;
+    default:
+        free(dst);
+        return nullptr;
+    }
+    *out_size = sz;
+    return dst;
+}
+
+// Compress/convert a single mip level.
+// For BC formats: uses rdo_bc_encoder. For uncompressed: pixel conversion.
+// Returns malloc'd data and sets *out_size.
 static uint8_t* compress_mip(const uint8_t* rgba, int w, int h,
                               TfBCFormat fmt, float quality,
                               size_t* out_size) {
-    if (fmt == TF_A8R8G8B8) {
-        // Uncompressed: swizzle RGBA → BGRA
-        size_t px_count = (size_t)w * h;
-        size_t sz = px_count * 4;
-        uint8_t* dst = (uint8_t*)malloc(sz);
-        if (!dst) return nullptr;
-        for (size_t p = 0; p < px_count; p++) {
-            dst[p * 4 + 0] = rgba[p * 4 + 2]; // B
-            dst[p * 4 + 1] = rgba[p * 4 + 1]; // G
-            dst[p * 4 + 2] = rgba[p * 4 + 0]; // R
-            dst[p * 4 + 3] = rgba[p * 4 + 3]; // A
-        }
-        *out_size = sz;
-        return dst;
+    // Uncompressed formats: pixel conversion
+    if (!is_block_compressed(fmt)) {
+        return convert_pixels(rgba, w, h, fmt, out_size);
     }
+
+    // BC2/BC6H not supported by rdo_bc_encoder
+    if (fmt == TF_BC2 || fmt == TF_BC6H) return nullptr;
 
     // Build image_u8 from RGBA pixels
     utils::image_u8 src_img(w, h);
@@ -498,15 +693,7 @@ TF_API size_t tf_compressed_mip_size(const TfCompressed* c, int mip) {
 // DDS writing uses bc7enc_rdo's save_dds for BC formats.
 // For uncompressed (A8R8G8B8) we build the header ourselves.
 
-static uint32_t dxgi_pixel_format_bpp(DXGI_FORMAT fmt) {
-    switch (fmt) {
-        case DXGI_FORMAT_BC1_UNORM: return 4;
-        case DXGI_FORMAT_BC3_UNORM: case DXGI_FORMAT_BC4_UNORM:
-        case DXGI_FORMAT_BC5_UNORM: case DXGI_FORMAT_BC7_UNORM: return 8;
-        case DXGI_FORMAT_B8G8R8A8_UNORM: return 32;
-        default: return 0;
-    }
-}
+// (dxgi_pixel_format_bpp removed — replaced by pixel_byte_size / block_byte_size)
 
 // Build DDS in memory — we need this for the Python API since save_dds writes to disk.
 // For BC formats, we use bc7enc_rdo's header logic via save_dds to a temp file,
@@ -561,9 +748,14 @@ struct DDS_HEADER_DXT10_LOCAL {
 
 static uint8_t* build_dds_file(const TfCompressed* c, size_t* out_total) {
     TfBCFormat fmt = (TfBCFormat)c->format;
-    bool uncompressed = (fmt == TF_A8R8G8B8);
-    // BC4, BC5, BC7 need DX10 header; BC1, BC3 use legacy FourCC
-    bool use_dx10 = !uncompressed && (fmt == TF_BC7 || fmt == TF_BC4 || fmt == TF_BC5);
+    bool bc = is_block_compressed(fmt);
+
+    // Legacy FourCC works for BC1 (DXT1), BC2 (DXT3), BC3 (DXT5).
+    // Legacy pixel format works for A8R8G8B8 (32-bit BGRA).
+    // Everything else needs DX10 extended header.
+    bool legacy_fourcc = (fmt == TF_BC1 || fmt == TF_BC2 || fmt == TF_BC3);
+    bool legacy_a8r8g8b8 = (fmt == TF_A8R8G8B8);
+    bool use_dx10 = !legacy_fourcc && !legacy_a8r8g8b8;
 
     DDS_HEADER_LOCAL hdr = {};
     hdr.size = 124;
@@ -573,7 +765,7 @@ static uint8_t* build_dds_file(const TfCompressed* c, size_t* out_total) {
     hdr.caps = DDSCAPS_TEXTURE;
     hdr.ddspf.size = 32;
 
-    if (uncompressed) {
+    if (legacy_a8r8g8b8) {
         hdr.flags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_PITCH;
         hdr.pitchOrLinearSize = c->width * 4;
         hdr.ddspf.flags = DDPF_RGB | DDPF_ALPHAPIXELS;
@@ -582,15 +774,25 @@ static uint8_t* build_dds_file(const TfCompressed* c, size_t* out_total) {
         hdr.ddspf.gBitMask = 0x0000FF00;
         hdr.ddspf.bBitMask = 0x000000FF;
         hdr.ddspf.aBitMask = 0xFF000000;
-    } else {
+    } else if (bc) {
         hdr.flags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_LINEARSIZE;
         hdr.pitchOrLinearSize = (uint32_t)c->mip_sizes[0];
         hdr.ddspf.flags = DDPF_FOURCC;
         if (use_dx10) {
             hdr.ddspf.fourCC = 0x30315844; // "DX10"
+        } else if (fmt == TF_BC1) {
+            hdr.ddspf.fourCC = 0x31545844; // "DXT1"
+        } else if (fmt == TF_BC2) {
+            hdr.ddspf.fourCC = 0x33545844; // "DXT3"
         } else {
-            hdr.ddspf.fourCC = (fmt == TF_BC1) ? 0x31545844 : 0x35545844;
+            hdr.ddspf.fourCC = 0x35545844; // "DXT5"
         }
+    } else {
+        // All other uncompressed formats → DX10
+        hdr.flags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_PITCH;
+        hdr.pitchOrLinearSize = c->width * pixel_byte_size(fmt);
+        hdr.ddspf.flags = DDPF_FOURCC;
+        hdr.ddspf.fourCC = 0x30315844; // "DX10"
     }
 
     if (c->mip_count > 1) {
@@ -717,18 +919,147 @@ TF_API TfCompressed* tf_load_dds(const wchar_t* path) {
 
 // ── Block decompression ──────────────────────────────────────────────────────
 
+// IEEE 754 half → float
+static float half_to_float(uint16_t h) {
+    uint32_t sign = (h >> 15) & 1;
+    uint32_t exp  = (h >> 10) & 0x1F;
+    uint32_t mant = h & 0x3FF;
+    uint32_t f;
+    if (exp == 0) {
+        if (mant == 0) f = sign << 31;
+        else { // denorm
+            float val = (float)mant / 1024.0f;
+            val = val * (1.0f / 16384.0f); // 2^-14
+            if (sign) val = -val;
+            memcpy(&f, &val, 4);
+            return val;
+        }
+    } else if (exp == 31) {
+        f = (sign << 31) | 0x7F800000 | (mant << 13);
+    } else {
+        f = (sign << 31) | ((exp - 15 + 127) << 23) | (mant << 13);
+    }
+    float result;
+    memcpy(&result, &f, 4);
+    return result;
+}
+
+static uint8_t float_to_u8(float f) {
+    int v = (int)(f * 255.0f + 0.5f);
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return (uint8_t)v;
+}
+
 static uint8_t* decompress_mip(const uint8_t* src, int w, int h, TfBCFormat fmt) {
     size_t px_count = (size_t)w * h;
     uint8_t* rgba = (uint8_t*)malloc(px_count * 4);
     if (!rgba) return nullptr;
 
-    if (fmt == TF_A8R8G8B8) {
-        // BGRA → RGBA swizzle
-        for (size_t p = 0; p < px_count; p++) {
-            rgba[p * 4 + 0] = src[p * 4 + 2]; // R
-            rgba[p * 4 + 1] = src[p * 4 + 1]; // G
-            rgba[p * 4 + 2] = src[p * 4 + 0]; // B
-            rgba[p * 4 + 3] = src[p * 4 + 3]; // A
+    // Handle all uncompressed formats
+    if (!is_block_compressed(fmt)) {
+        switch (fmt) {
+        case TF_A8R8G8B8:
+            for (size_t p = 0; p < px_count; p++) {
+                rgba[p*4+0] = src[p*4+2];
+                rgba[p*4+1] = src[p*4+1];
+                rgba[p*4+2] = src[p*4+0];
+                rgba[p*4+3] = src[p*4+3];
+            }
+            break;
+        case TF_R8G8B8A8:
+            memcpy(rgba, src, px_count * 4);
+            break;
+        case TF_B5G6R5:
+            for (size_t p = 0; p < px_count; p++) {
+                uint16_t v; memcpy(&v, src + p*2, 2);
+                rgba[p*4+0] = (uint8_t)(((v >> 11) & 0x1F) * 255 / 31);
+                rgba[p*4+1] = (uint8_t)(((v >> 5) & 0x3F) * 255 / 63);
+                rgba[p*4+2] = (uint8_t)((v & 0x1F) * 255 / 31);
+                rgba[p*4+3] = 255;
+            }
+            break;
+        case TF_B5G5R5A1:
+            for (size_t p = 0; p < px_count; p++) {
+                uint16_t v; memcpy(&v, src + p*2, 2);
+                rgba[p*4+0] = (uint8_t)(((v >> 10) & 0x1F) * 255 / 31);
+                rgba[p*4+1] = (uint8_t)(((v >> 5) & 0x1F) * 255 / 31);
+                rgba[p*4+2] = (uint8_t)((v & 0x1F) * 255 / 31);
+                rgba[p*4+3] = (v >> 15) ? 255 : 0;
+            }
+            break;
+        case TF_R10G10B10A2:
+            for (size_t p = 0; p < px_count; p++) {
+                uint32_t v; memcpy(&v, src + p*4, 4);
+                rgba[p*4+0] = (uint8_t)((v & 0x3FF) * 255 / 1023);
+                rgba[p*4+1] = (uint8_t)(((v >> 10) & 0x3FF) * 255 / 1023);
+                rgba[p*4+2] = (uint8_t)(((v >> 20) & 0x3FF) * 255 / 1023);
+                rgba[p*4+3] = (uint8_t)(((v >> 30) & 0x3) * 255 / 3);
+            }
+            break;
+        case TF_R8:
+            for (size_t p = 0; p < px_count; p++) {
+                rgba[p*4+0] = src[p];
+                rgba[p*4+1] = src[p];
+                rgba[p*4+2] = src[p];
+                rgba[p*4+3] = 255;
+            }
+            break;
+        case TF_A8:
+            for (size_t p = 0; p < px_count; p++) {
+                rgba[p*4+0] = 255;
+                rgba[p*4+1] = 255;
+                rgba[p*4+2] = 255;
+                rgba[p*4+3] = src[p];
+            }
+            break;
+        case TF_R8G8:
+            for (size_t p = 0; p < px_count; p++) {
+                rgba[p*4+0] = src[p*2+0];
+                rgba[p*4+1] = src[p*2+1];
+                rgba[p*4+2] = 0;
+                rgba[p*4+3] = 255;
+            }
+            break;
+        case TF_R16_FLOAT:
+            for (size_t p = 0; p < px_count; p++) {
+                uint16_t v; memcpy(&v, src + p*2, 2);
+                uint8_t u = float_to_u8(half_to_float(v));
+                rgba[p*4+0] = u; rgba[p*4+1] = u; rgba[p*4+2] = u; rgba[p*4+3] = 255;
+            }
+            break;
+        case TF_R16G16_FLOAT:
+            for (size_t p = 0; p < px_count; p++) {
+                uint16_t r, g; memcpy(&r, src+p*4, 2); memcpy(&g, src+p*4+2, 2);
+                rgba[p*4+0] = float_to_u8(half_to_float(r));
+                rgba[p*4+1] = float_to_u8(half_to_float(g));
+                rgba[p*4+2] = 0; rgba[p*4+3] = 255;
+            }
+            break;
+        case TF_R16G16B16A16_FLOAT:
+            for (size_t p = 0; p < px_count; p++) {
+                uint16_t ch[4]; memcpy(ch, src+p*8, 8);
+                for (int c = 0; c < 4; c++)
+                    rgba[p*4+c] = float_to_u8(half_to_float(ch[c]));
+            }
+            break;
+        case TF_R32_FLOAT:
+            for (size_t p = 0; p < px_count; p++) {
+                float v; memcpy(&v, src+p*4, 4);
+                uint8_t u = float_to_u8(v);
+                rgba[p*4+0] = u; rgba[p*4+1] = u; rgba[p*4+2] = u; rgba[p*4+3] = 255;
+            }
+            break;
+        case TF_R32G32B32A32_FLOAT:
+            for (size_t p = 0; p < px_count; p++) {
+                float ch[4]; memcpy(ch, src+p*16, 16);
+                for (int c = 0; c < 4; c++)
+                    rgba[p*4+c] = float_to_u8(ch[c]);
+            }
+            break;
+        default:
+            free(rgba);
+            return nullptr;
         }
         return rgba;
     }

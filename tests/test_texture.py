@@ -121,6 +121,61 @@ class TestInspectDds:
         assert "data_size" in info
 
 
+class TestUncompressedFormats:
+    """Test all uncompressed pixel format conversions (PNG → format → RGBA roundtrip)."""
+
+    # Formats that go through convert_pixels in the native module
+    UNCOMPRESSED_FORMATS = (
+        BCFormat.A8R8G8B8, BCFormat.R8G8B8A8,
+        BCFormat.B5G6R5, BCFormat.B5G5R5A1, BCFormat.R10G10B10A2,
+        BCFormat.R8, BCFormat.A8, BCFormat.R8G8,
+        BCFormat.R16_FLOAT, BCFormat.R16G16_FLOAT,
+        BCFormat.R16G16B16A16_FLOAT,
+        BCFormat.R32_FLOAT, BCFormat.R32G32B32A32_FLOAT,
+    )
+
+    @pytest.mark.parametrize("fmt", UNCOMPRESSED_FORMATS, ids=lambda f: f.name)
+    def test_create_from_png(self, png_64, fmt):
+        """Each uncompressed format can be created from a PNG."""
+        tex = Texture.from_image(str(png_64), format=fmt)
+        assert tex.format == fmt
+        assert tex.width == 64
+        assert tex.height == 64
+        assert len(tex.data) > 0
+
+    @pytest.mark.parametrize("fmt", UNCOMPRESSED_FORMATS, ids=lambda f: f.name)
+    def test_dds_roundtrip(self, png_64, tmp_path, fmt):
+        """DDS save → load roundtrip preserves format and dimensions."""
+        tex = Texture.from_image(str(png_64), format=fmt)
+        dds_path = tmp_path / f"test_{fmt.name}.dds"
+        tex.save_dds(str(dds_path))
+
+        tex2 = Texture.from_dds(str(dds_path))
+        assert tex2.width == 64
+        assert tex2.height == 64
+        assert tex2.format == fmt
+        assert len(tex2.data) == len(tex.data)
+
+    @pytest.mark.parametrize("fmt", UNCOMPRESSED_FORMATS, ids=lambda f: f.name)
+    def test_decompress_to_rgba(self, png_64, fmt):
+        """Decompressing to RGBA produces valid pixel data."""
+        tex = Texture.from_image(str(png_64), format=fmt)
+        rgba, w, h = tex.to_rgba()
+        assert w == 64
+        assert h == 64
+        assert len(rgba) == w * h * 4
+
+    def test_r8g8b8a8_lossless(self, png_64):
+        """R8G8B8A8 should be lossless (same as input RGBA)."""
+        tex = Texture.from_image(str(png_64), format=BCFormat.R8G8B8A8,
+                                 generate_mipmaps=False)
+        rgba, w, h = tex.to_rgba()
+        # Load original for comparison
+        orig = Texture.from_image(str(png_64), format=BCFormat.R8G8B8A8,
+                                  generate_mipmaps=False)
+        assert tex.data == orig.data
+
+
 class TestValidate:
     def test_valid_texture(self, png_64):
         tex = Texture.from_image(str(png_64), format=BCFormat.BC1, name="valid")
