@@ -2,17 +2,18 @@
 
 Fast image-to-DDS conversion and RAGE texture dictionary toolkit for Python.
 
-Built on **bc7enc_rdo** + **ISPC bc7e** for high-quality BC1/BC3/BC4/BC5/BC7 compression, with support for uncompressed A8R8G8B8 textures. No DirectXTex dependency — a single native DLL handles everything.
+Built on **bc7enc_rdo** + **ISPC bc7e** for high-quality block compression, with pixel conversion for all common uncompressed formats. No DirectXTex dependency — a single native DLL handles everything.
 
 ## Features
 
-- **BC1, BC3, BC4, BC5, BC7** block compression with adjustable quality (0.0–1.0)
-- **A8R8G8B8** uncompressed 32-bit BGRA format
-- **DDS** file read/write (legacy + DX10 extended headers)
+- **20 texture formats** — BC1–BC7 block compression, plus A8R8G8B8, R8G8B8A8, B5G6R5, B5G5R5A1, R10G10B10A2, R8, A8, R8G8, and float/half-float variants
+- **DDS** file read/write from files or memory (legacy + DX10 extended headers)
 - **Texture dictionaries** — create and extract `.wtd` (GTA IV) and `.ytd` (GTA V, GTA V gen9, RDR2)
-- **Mipmap generation** with configurable minimum size
+- **Automatic texture repair** — `fix_textures()` fixes missing mipmaps, non-POT dimensions, and optimizes format choice
+- **Mipmap generation** with configurable filters and minimum size
 - **Automatic power-of-two resize** (sRGB-aware via stb_image_resize2)
 - **Transparency detection** without manual pixel iteration
+- **Oodle & Deflate compression** for RDR2 via `RscCompression` enum
 - **Pillow integration** — accept `PIL.Image` objects (Pillow is optional)
 - **Batch operations** with progress callbacks
 - **Zero Python dependencies** — Pillow is optional
@@ -70,20 +71,41 @@ extract_dict("vehicles.ytd", "extracted/")
 
 ## API Reference
 
-### `BCFormat` — Compression Formats
+### `BCFormat` — Texture Formats
 
 ```python
 from texfury import BCFormat
 ```
 
-| Value | Name | Description |
+#### Block-compressed formats
+
+| Value | Alias | Description |
+|-------|-------|-------------|
+| `BCFormat.BC1` | DXT1 | RGB, 8 bytes/block. No alpha. Smallest files. |
+| `BCFormat.BC2` | DXT3 | RGBA, 16 bytes/block. Explicit 4-bit alpha. *(read-only)* |
+| `BCFormat.BC3` | DXT5 | RGBA, 16 bytes/block. Interpolated alpha. |
+| `BCFormat.BC4` | ATI1 | Single channel (R), 8 bytes/block. Grayscale/height maps. |
+| `BCFormat.BC5` | ATI2 | Two channels (RG), 16 bytes/block. Normal maps. |
+| `BCFormat.BC6H` | — | HDR RGB, 16 bytes/block. Half-float. *(read-only)* |
+| `BCFormat.BC7` | — | RGBA, 16 bytes/block. Best quality, slowest to encode. |
+
+#### Uncompressed formats
+
+| Value | Size | Description |
 |-------|------|-------------|
-| `BCFormat.BC1` | DXT1 | RGB, 6:1 ratio. No alpha. Smallest files. |
-| `BCFormat.BC3` | DXT5 | RGBA, 4:1 ratio. Full alpha channel. |
-| `BCFormat.BC4` | ATI1 | Single channel (R), 4:1 ratio. Grayscale/height maps. |
-| `BCFormat.BC5` | ATI2 | Two channels (RG), 4:1 ratio. Normal maps. |
-| `BCFormat.BC7` | BC7 | RGBA, 4:1 ratio. Best quality, slowest to encode. |
-| `BCFormat.A8R8G8B8` | Uncompressed | 32-bit BGRA. No compression, largest files. |
+| `BCFormat.A8R8G8B8` | 4 bpp | 32-bit BGRA |
+| `BCFormat.R8G8B8A8` | 4 bpp | 32-bit RGBA |
+| `BCFormat.B5G6R5` | 2 bpp | 16-bit RGB 5-6-5 |
+| `BCFormat.B5G5R5A1` | 2 bpp | 16-bit BGRA 5-5-5-1 |
+| `BCFormat.R10G10B10A2` | 4 bpp | 32-bit RGB 10-10-10 + 2-bit alpha |
+| `BCFormat.R8` | 1 bpp | 8-bit single channel |
+| `BCFormat.A8` | 1 bpp | 8-bit alpha only |
+| `BCFormat.R8G8` | 2 bpp | 16-bit two channels |
+| `BCFormat.R16_FLOAT` | 2 bpp | 16-bit half-float single channel |
+| `BCFormat.R16G16_FLOAT` | 4 bpp | 32-bit half-float two channels |
+| `BCFormat.R16G16B16A16_FLOAT` | 8 bpp | 64-bit half-float RGBA |
+| `BCFormat.R32_FLOAT` | 4 bpp | 32-bit float single channel |
+| `BCFormat.R32G32B32A32_FLOAT` | 16 bpp | 128-bit float RGBA |
 
 **Choosing a format:**
 
@@ -91,9 +113,29 @@ from texfury import BCFormat
 - **Textures with alpha**: `BC3` or `BC7`
 - **Normal maps**: `BC5`
 - **Grayscale / height maps**: `BC4`
-- **Must be pixel-perfect**: `A8R8G8B8`
+- **Must be pixel-perfect**: `A8R8G8B8` or `R8G8B8A8`
 
-> **GTA IV note:** Only `BC1`, `BC3`, and `A8R8G8B8` are supported. BC4, BC5, and BC7 are not available on that platform.
+> **GTA IV note:** Only `BC1`, `BC2`, `BC3`, `A8R8G8B8`, `B5G5R5A1`, `B5G6R5`, `A8`, and `R8` are supported.
+
+---
+
+### `RscCompression` — RSC Container Compression
+
+```python
+from texfury import RscCompression
+```
+
+| Value | Description |
+|-------|-------------|
+| `RscCompression.DEFLATE` | zlib raw deflate — GTA V Legacy, GTA V Enhanced |
+| `RscCompression.OODLE` | Oodle Kraken — RDR2 vanilla files |
+
+Used when saving RDR2 texture dictionaries:
+
+```python
+td.save("output.ytd", compression=RscCompression.OODLE)   # default for RDR2
+td.save("output.ytd", compression=RscCompression.DEFLATE)  # zlib fallback
+```
 
 ---
 
@@ -152,16 +194,36 @@ tex = Texture.from_image(
 
 **Supported image formats:** PNG, JPG/JPEG, TGA, BMP, PSD, WebP, GIF, HDR, PNM/PPM natively. With Pillow installed, any format Pillow supports (TIFF, ICO, EPS, etc.) works automatically as a fallback.
 
-##### `Texture.from_bytes(data, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, name)`
+##### `Texture.from_bytes(data, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, recompress, name)`
 
-Load an image from in-memory bytes and compress it. Same parameters as `from_image`, but accepts raw file bytes instead of a path.
+Load an image or DDS from in-memory bytes. DDS files are auto-detected and loaded as-is by default.
 
 ```python
-import httpx
-from texfury import Texture, BCFormat
+# Load a PNG from memory
+tex = Texture.from_bytes(png_data, format=BCFormat.BC7, name="downloaded")
 
-resp = httpx.get("https://example.com/texture.png")
-tex = Texture.from_bytes(resp.content, format=BCFormat.BC7, name="downloaded")
+# Load a DDS as-is (format/quality ignored)
+tex = Texture.from_bytes(dds_data)
+
+# Recompress a DDS to a different format
+tex = Texture.from_bytes(dds_data, format=BCFormat.BC7, recompress=True)
+```
+
+##### `Texture.from_dds(source, *, name)`
+
+Load an existing DDS file.
+
+```python
+tex = Texture.from_dds("existing.dds")
+print(tex.format, tex.width, tex.height, tex.mip_count)
+```
+
+##### `Texture.from_dds_bytes(data, *, name)`
+
+Load a DDS texture from in-memory bytes.
+
+```python
+tex = Texture.from_dds_bytes(dds_data, name="from_memory")
 ```
 
 ##### `Texture.from_pil(image, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, name)`
@@ -177,30 +239,9 @@ tex = Texture.from_pil(img, format=BCFormat.BC3, quality=0.9)
 tex.save_dds("result.dds")
 ```
 
-##### `Texture.from_dds(source, *, name)`
-
-Load an existing DDS file.
-
-```python
-tex = Texture.from_dds("existing.dds")
-print(tex.format, tex.width, tex.height, tex.mip_count)
-```
-
 ##### `Texture.from_raw(data, width, height, fmt, mip_count, mip_offsets, mip_sizes, name)`
 
 Create from raw compressed pixel data (advanced / internal use).
-
-```python
-tex = Texture.from_raw(
-    data=raw_bytes,
-    width=256, height=256,
-    fmt=BCFormat.BC7,
-    mip_count=7,
-    mip_offsets=[0, 65536, ...],
-    mip_sizes=[65536, 16384, ...],
-    name="custom",
-)
-```
 
 #### Saving Textures
 
@@ -224,7 +265,7 @@ dds_data = tex.to_dds_bytes()
 
 ##### `tex.to_rgba(mip=0)`
 
-Decompress a texture back to raw RGBA pixels. Works with all formats (BC1–BC7, A8R8G8B8).
+Decompress a texture back to raw RGBA pixels. Works with all 20 formats.
 
 ```python
 rgba_bytes, width, height = tex.to_rgba()      # mip 0 (full resolution)
@@ -297,9 +338,9 @@ from texfury import suggest_format, has_transparency
 
 fmt = suggest_format(
     has_alpha=has_transparency("icon.png"),
-    quality_over_size=True,  # True → BC7, False → BC1/BC3
+    quality_over_size=True,  # True -> BC7, False -> BC1/BC3
 )
-# Also supports: normal_map=True → BC5, single_channel=True → BC4
+# Also supports: normal_map=True -> BC5, single_channel=True -> BC4
 ```
 
 ---
@@ -312,7 +353,7 @@ from texfury import Game
 
 | Value | Format | Extension | Description |
 |-------|--------|-----------|-------------|
-| `Game.GTA4` | RSC5 | `.wtd` | GTA IV. Only BC1, BC3, A8R8G8B8. |
+| `Game.GTA4` | RSC5 | `.wtd` | GTA IV. Only BC1, BC2, BC3, A8R8G8B8, B5G5R5A1, B5G6R5, A8, R8. |
 | `Game.GTA5` | RSC7 v13 | `.ytd` | GTA V (Legacy). **Default.** |
 | `Game.GTA5_GEN9` | RSC7 v5 | `.ytd` | GTA V Enhanced (gen9). |
 | `Game.RDR2` | RSC8 | `.ytd` | Red Dead Redemption 2. |
@@ -377,6 +418,25 @@ td.save("vehicles_patched.ytd")
 td.remove("body_s")
 ```
 
+#### Fixing Textures
+
+Automatically repair common issues in a loaded texture dictionary:
+
+```python
+td = ITD.load("vehicles.ytd")
+report = td.fix_textures()
+
+for entry in report:
+    print(f"{entry['name']}: {', '.join(entry['fixes'])}")
+
+td.save("vehicles_fixed.ytd")
+```
+
+Fixes applied:
+- **Non-power-of-two** dimensions are resized to nearest POT
+- **Missing mipmaps** are regenerated
+- **Format optimization** — opaque BC3/BC7 textures are switched to BC1, transparent BC1 textures are switched to BC3
+
 #### Inspecting Without Loading Data
 
 ```python
@@ -424,7 +484,7 @@ path = create_dict_from_folder(
 | `output` | `<folder>.ytd` | Output path |
 | `game` | `GTA5` | Target game (see `Game` enum) |
 | `format` | `BC7` | Compression format for all textures |
-| `quality` | `0.7` | Compression quality 0.0–1.0 |
+| `quality` | `0.7` | Compression quality 0.0-1.0 |
 | `generate_mipmaps` | `True` | Generate mipmap chain |
 | `min_mip_size` | `4` | Minimum mip dimension |
 | `mip_filter` | `MITCHELL` | Downsampling filter for mipmaps |
@@ -580,6 +640,18 @@ td.add(Texture.from_image("body_e.png", format=BCFormat.A8R8G8B8))
 td.save("body.ytd")
 ```
 
+### Fix and re-save a texture dictionary
+
+```python
+from texfury import ITD
+
+td = ITD.load("vehicles.ytd")
+report = td.fix_textures(quality=0.8)
+for r in report:
+    print(f"Fixed {r['name']}: {r['fixes']}")
+td.save("vehicles_fixed.ytd")
+```
+
 ### Batch convert with progress bar (tqdm)
 
 ```python
@@ -600,34 +672,18 @@ if pbar:
     pbar.close()
 ```
 
-### Re-pack a texture dictionary with different compression
-
-```python
-from texfury import ITD, BCFormat
-
-td = ITD.load("original.ytd")
-new_td = ITD(game=td.game)
-
-for tex in td.textures:
-    rgba, w, h = tex.to_rgba()
-    new_tex = Texture.from_bytes(rgba, format=BCFormat.BC7, quality=0.9, name=tex.name)
-    new_td.add(new_tex)
-
-new_td.save("repacked.ytd")
-```
-
 ---
 
 ## Quality Guide
 
-The `quality` parameter (0.0–1.0) maps to the encoder's internal quality levels:
+The `quality` parameter (0.0-1.0) maps to the encoder's internal quality levels:
 
 | Range | Speed | Quality | Use case |
 |-------|-------|---------|----------|
-| 0.0–0.2 | Fastest | Low | Quick previews, testing |
-| 0.3–0.5 | Fast | Medium | Development builds |
-| 0.6–0.8 | Moderate | High | Production use (recommended) |
-| 0.9–1.0 | Slow | Maximum | Final release, archival |
+| 0.0-0.2 | Fastest | Low | Quick previews, testing |
+| 0.3-0.5 | Fast | Medium | Development builds |
+| 0.6-0.8 | Moderate | High | Production use (recommended) |
+| 0.9-1.0 | Slow | Maximum | Final release, archival |
 
 BC7 is the slowest format to encode but produces the best visual quality. For rapid iteration, use `BC1` or `BC3` at lower quality, then do a final pass with `BC7` at 0.8+.
 
@@ -637,6 +693,6 @@ BC7 is the slowest format to encode but produces the best visual quality. For ra
 
 - **Windows only** — the native DLL is compiled for x64 Windows with MSVC
 - **Power-of-two textures** — texture dictionaries require POT dimensions; `resize_to_pot=True` handles this automatically
-- **No BC2 / BC6H** — BC2 (DXT3) is rarely used; BC6H (HDR) may be added later
-- **GTA IV format support** — only BC1, BC3, and A8R8G8B8 (no BC4/BC5/BC7)
-- **Max texture size** — limited by available memory; typical textures are 256–2048px
+- **No BC2 / BC6H encoding** — BC2 (DXT3) and BC6H (HDR) can be read but not created from PNG
+- **GTA IV format support** — only BC1, BC2, BC3, A8R8G8B8, B5G5R5A1, B5G6R5, A8, and R8
+- **Max texture size** — limited by available memory; typical textures are 256-2048px
