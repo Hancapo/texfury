@@ -20,6 +20,34 @@ set "STB=%VENDOR%\stb"
 set "BC7=%VENDOR%\bc7enc_rdo"
 set "OUT=%~dp0..\texfury"
 
+:: ── ISPC (optional — recompile bc7e.ispc if ispc.exe is available) ──────────
+set "ISPC_EXE="
+where ispc >nul 2>&1 && set "ISPC_EXE=ispc"
+if "%ISPC_EXE%"=="" (
+    if exist "%~dp0ispc_tmp\ispc-v1.26.0-windows\bin\ispc.exe" (
+        set "ISPC_EXE=%~dp0ispc_tmp\ispc-v1.26.0-windows\bin\ispc.exe"
+    )
+)
+
+if not "%ISPC_EXE%"=="" (
+    echo Compiling bc7e.ispc with ISPC ...
+    "%ISPC_EXE%" -O2 "%BC7%\bc7e.ispc" -o "%BC7%\bc7e.obj" -h "%BC7%\bc7e_ispc.h" ^
+        --target=sse2,sse4,avx,avx2 --opt=fast-math --opt=disable-assertions --wno-perf
+    if errorlevel 1 (
+        echo WARNING: ISPC compilation failed, using existing .obj files
+    ) else (
+        echo ISPC compilation OK
+    )
+) else (
+    if not exist "%BC7%\bc7e.obj" (
+        echo ERROR: ISPC precompiled .obj files not found and ispc.exe not available.
+        echo   Install ISPC from https://github.com/ispc/ispc/releases
+        echo   or place ispc.exe on PATH.
+        exit /b 1
+    )
+    echo Using existing ISPC .obj files
+)
+
 :: ── Compile ──────────────────────────────────────────────────────────────────
 echo Building texfury_native.dll ...
 
