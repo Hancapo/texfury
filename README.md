@@ -79,33 +79,33 @@ from texfury import BCFormat
 
 #### Block-compressed formats
 
-| Value | Alias | Description |
-|-------|-------|-------------|
-| `BCFormat.BC1` | DXT1 | RGB, 8 bytes/block. No alpha. Smallest files. |
-| `BCFormat.BC2` | DXT3 | RGBA, 16 bytes/block. Explicit 4-bit alpha. *(read-only)* |
-| `BCFormat.BC3` | DXT5 | RGBA, 16 bytes/block. Interpolated alpha. |
-| `BCFormat.BC4` | ATI1 | Single channel (R), 8 bytes/block. Grayscale/height maps. |
-| `BCFormat.BC5` | ATI2 | Two channels (RG), 16 bytes/block. Normal maps. |
-| `BCFormat.BC6H` | — | HDR RGB, 16 bytes/block. Half-float. *(read-only)* |
-| `BCFormat.BC7` | — | RGBA, 16 bytes/block. Best quality, slowest to encode. |
+| Value | Alias | Write | Read | Description |
+|-------|-------|:-----:|:----:|-------------|
+| `BCFormat.BC1` | DXT1 | ✅ | ✅ | RGB, 8 bytes/block. No alpha. Smallest files. |
+| `BCFormat.BC2` | DXT3 | ❌ | ✅ | RGBA, 16 bytes/block. Explicit 4-bit alpha. |
+| `BCFormat.BC3` | DXT5 | ✅ | ✅ | RGBA, 16 bytes/block. Interpolated alpha. |
+| `BCFormat.BC4` | ATI1 | ✅ | ✅ | Single channel (R), 8 bytes/block. Grayscale/height maps. |
+| `BCFormat.BC5` | ATI2 | ✅ | ✅ | Two channels (RG), 16 bytes/block. Normal maps. |
+| `BCFormat.BC6H` | — | ❌ | ✅ | HDR RGB, 16 bytes/block. Half-float. |
+| `BCFormat.BC7` | — | ✅ | ✅ | RGBA, 16 bytes/block. Best quality, slowest to encode. |
 
 #### Uncompressed formats
 
-| Value | Size | Description |
-|-------|------|-------------|
-| `BCFormat.A8R8G8B8` | 4 bpp | 32-bit BGRA |
-| `BCFormat.R8G8B8A8` | 4 bpp | 32-bit RGBA |
-| `BCFormat.B5G6R5` | 2 bpp | 16-bit RGB 5-6-5 |
-| `BCFormat.B5G5R5A1` | 2 bpp | 16-bit BGRA 5-5-5-1 |
-| `BCFormat.R10G10B10A2` | 4 bpp | 32-bit RGB 10-10-10 + 2-bit alpha |
-| `BCFormat.R8` | 1 bpp | 8-bit single channel |
-| `BCFormat.A8` | 1 bpp | 8-bit alpha only |
-| `BCFormat.R8G8` | 2 bpp | 16-bit two channels |
-| `BCFormat.R16_FLOAT` | 2 bpp | 16-bit half-float single channel |
-| `BCFormat.R16G16_FLOAT` | 4 bpp | 32-bit half-float two channels |
-| `BCFormat.R16G16B16A16_FLOAT` | 8 bpp | 64-bit half-float RGBA |
-| `BCFormat.R32_FLOAT` | 4 bpp | 32-bit float single channel |
-| `BCFormat.R32G32B32A32_FLOAT` | 16 bpp | 128-bit float RGBA |
+| Value | Size | Write | Read | Description |
+|-------|------|:-----:|:----:|-------------|
+| `BCFormat.A8R8G8B8` | 4 bpp | ✅ | ✅ | 32-bit BGRA |
+| `BCFormat.R8G8B8A8` | 4 bpp | ✅ | ✅ | 32-bit RGBA |
+| `BCFormat.B5G6R5` | 2 bpp | ✅ | ✅ | 16-bit RGB 5-6-5 |
+| `BCFormat.B5G5R5A1` | 2 bpp | ✅ | ✅ | 16-bit BGRA 5-5-5-1 |
+| `BCFormat.R10G10B10A2` | 4 bpp | ✅ | ✅ | 32-bit RGB 10-10-10 + 2-bit alpha |
+| `BCFormat.R8` | 1 bpp | ✅ | ✅ | 8-bit single channel |
+| `BCFormat.A8` | 1 bpp | ✅ | ✅ | 8-bit alpha only |
+| `BCFormat.R8G8` | 2 bpp | ✅ | ✅ | 16-bit two channels |
+| `BCFormat.R16_FLOAT` | 2 bpp | ✅ | ✅ | 16-bit half-float single channel |
+| `BCFormat.R16G16_FLOAT` | 4 bpp | ✅ | ✅ | 32-bit half-float two channels |
+| `BCFormat.R16G16B16A16_FLOAT` | 8 bpp | ✅ | ✅ | 64-bit half-float RGBA |
+| `BCFormat.R32_FLOAT` | 4 bpp | ✅ | ✅ | 32-bit float single channel |
+| `BCFormat.R32G32B32A32_FLOAT` | 16 bpp | ✅ | ✅ | 128-bit float RGBA |
 
 **Choosing a format:**
 
@@ -351,12 +351,12 @@ fmt = suggest_format(
 from texfury import Game
 ```
 
-| Value | Format | Extension | Description |
-|-------|--------|-----------|-------------|
-| `Game.GTA4` | RSC5 | `.wtd` | GTA IV. Only BC1, BC2, BC3, A8R8G8B8, B5G5R5A1, B5G6R5, A8, R8. |
-| `Game.GTA5` | RSC7 v13 | `.ytd` | GTA V (Legacy). **Default.** |
-| `Game.GTA5_GEN9` | RSC7 v5 | `.ytd` | GTA V Enhanced (gen9). |
-| `Game.RDR2` | RSC8 | `.ytd` | Red Dead Redemption 2. |
+| Value | Format | Extension | Write | Read | Description |
+|-------|--------|-----------|:-----:|:----:|-------------|
+| `Game.GTA4` | RSC5 | `.wtd` | ✅ | ✅ | GTA IV. Only BC1, BC2, BC3, A8R8G8B8, B5G5R5A1, B5G6R5, A8, R8. |
+| `Game.GTA5` | RSC7 v13 | `.ytd` | ✅ | ✅ | GTA V (Legacy). **Default.** |
+| `Game.GTA5_GEN9` | RSC7 v5 | `.ytd` | ✅ | ✅ | GTA V Enhanced (gen9). |
+| `Game.RDR2` | RSC8 | `.ytd` | ✅ | ✅ | Red Dead Redemption 2. |
 
 The `Game` enum controls which binary format is used when building texture dictionaries. When loading or inspecting, the game is auto-detected from the file header.
 
