@@ -57,6 +57,22 @@ class TestFromBytes:
         assert tex.height == 64
         assert tex.name == "frombytes"
 
+    def test_dds_passthrough(self, png_64):
+        """DDS bytes are loaded as-is by default (no recompression)."""
+        original = Texture.from_image(str(png_64), format=BCFormat.BC1)
+        dds_bytes = original.to_dds_bytes()
+        tex = Texture.from_bytes(dds_bytes, format=BCFormat.BC7, name="pass")
+        assert tex.format == BCFormat.BC1  # kept original, ignored BC7
+        assert tex.data == original.data
+
+    def test_dds_recompress(self, png_64):
+        """DDS bytes are recompressed when recompress=True."""
+        original = Texture.from_image(str(png_64), format=BCFormat.BC1)
+        dds_bytes = original.to_dds_bytes()
+        tex = Texture.from_bytes(dds_bytes, format=BCFormat.BC7, recompress=True)
+        assert tex.format == BCFormat.BC7  # recompressed to BC7
+        assert tex.width == original.width
+
 
 class TestDdsRoundTrip:
     def test_save_and_load(self, png_64, tmp_path):
@@ -70,6 +86,18 @@ class TestDdsRoundTrip:
         assert tex2.format == tex.format
         assert tex2.mip_count == tex.mip_count
         assert len(tex2.data) == len(tex.data)
+
+    def test_from_dds_bytes(self, png_64):
+        tex = Texture.from_image(str(png_64), format=BCFormat.BC7)
+        dds_bytes = tex.to_dds_bytes()
+
+        tex2 = Texture.from_dds_bytes(dds_bytes, name="from_mem")
+        assert tex2.width == tex.width
+        assert tex2.height == tex.height
+        assert tex2.format == tex.format
+        assert tex2.mip_count == tex.mip_count
+        assert tex2.data == tex.data
+        assert tex2.name == "from_mem"
 
     def test_to_dds_bytes(self, png_64, tmp_path):
         tex = Texture.from_image(str(png_64), format=BCFormat.BC1)

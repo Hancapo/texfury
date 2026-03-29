@@ -131,6 +131,9 @@ _lib.tf_save_dds_memory.restype = ctypes.c_int32
 _lib.tf_load_dds.argtypes = [ctypes.c_wchar_p]
 _lib.tf_load_dds.restype = TfCompressed
 
+_lib.tf_load_dds_memory.argtypes = [c_uint8_p, ctypes.c_size_t]
+_lib.tf_load_dds_memory.restype = TfCompressed
+
 # Decompression
 _lib.tf_decompress.argtypes = [TfCompressed, ctypes.c_int,
                                 ctypes.POINTER(ctypes.c_int),
@@ -263,6 +266,13 @@ def load_dds(path: str) -> TfCompressed:
     c = _lib.tf_load_dds(path)
     if not c:
         raise FileNotFoundError(f"Failed to load DDS: {path}")
+    return c
+
+def load_dds_memory(data: bytes) -> TfCompressed:
+    buf = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+    c = _lib.tf_load_dds_memory(buf, len(data))
+    if not c:
+        raise ValueError("Failed to parse DDS from memory")
     return c
 
 def decompress(c: TfCompressed, mip: int = 0) -> tuple[bytes, int, int]:

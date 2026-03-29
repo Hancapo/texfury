@@ -843,14 +843,13 @@ TF_API int32_t tf_save_dds_memory(const TfCompressed* c,
     return *out_buf ? 0 : -2;
 }
 
-TF_API TfCompressed* tf_load_dds(const wchar_t* path) {
-    size_t file_size = 0;
-    uint8_t* file_data = read_file(path, &file_size);
-    if (!file_data || file_size < 128) { free(file_data); return nullptr; }
+// Parse DDS from a memory buffer. The buffer is NOT freed by this function.
+static TfCompressed* parse_dds_buffer(const uint8_t* file_data, size_t file_size) {
+    if (!file_data || file_size < 128) return nullptr;
 
     uint32_t magic;
     memcpy(&magic, file_data, 4);
-    if (magic != DDS_MAGIC) { free(file_data); return nullptr; }
+    if (magic != DDS_MAGIC) return nullptr;
 
     DDS_HEADER_LOCAL hdr;
     memcpy(&hdr, file_data + 4, sizeof(DDS_HEADER_LOCAL));
@@ -861,10 +860,8 @@ TF_API TfCompressed* tf_load_dds(const wchar_t* path) {
     if (hdr.ddspf.flags & DDPF_FOURCC) {
         int mapped = fourcc_to_tf(hdr.ddspf.fourCC);
         if (mapped == -2) {
-            // DX10 extended header
-            if (file_size < pixel_offset + sizeof(DDS_HEADER_DXT10_LOCAL)) {
-                free(file_data); return nullptr;
-            }
+            if (file_size < pixel_offset + sizeof(DDS_HEADER_DXT10_LOCAL))
+                return nullptr;
             DDS_HEADER_DXT10_LOCAL dx10;
             memcpy(&dx10, file_data + pixel_offset, sizeof(DDS_HEADER_DXT10_LOCAL));
             pixel_offset += sizeof(DDS_HEADER_DXT10_LOCAL);
@@ -876,7 +873,7 @@ TF_API TfCompressed* tf_load_dds(const wchar_t* path) {
         bc_fmt = TF_A8R8G8B8;
     }
 
-    if (bc_fmt < 0) { free(file_data); return nullptr; }
+    if (bc_fmt < 0) return nullptr;
 
     int w = (int)hdr.width;
     int h = (int)hdr.height;
@@ -885,7 +882,6 @@ TF_API TfCompressed* tf_load_dds(const wchar_t* path) {
 
     TfBCFormat tfmt = (TfBCFormat)bc_fmt;
 
-    // Calculate sizes
     size_t total = 0;
     size_t* offsets = (size_t*)malloc(mip_count * sizeof(size_t));
     size_t* sizes_arr = (size_t*)malloc(mip_count * sizeof(size_t));
@@ -903,7 +899,6 @@ TF_API TfCompressed* tf_load_dds(const wchar_t* path) {
 
     uint8_t* data = (uint8_t*)malloc(total);
     memcpy(data, file_data + pixel_offset, total);
-    free(file_data);
 
     auto* result = new TfCompressed();
     result->data = data;
@@ -915,6 +910,19 @@ TF_API TfCompressed* tf_load_dds(const wchar_t* path) {
     result->mip_offsets = offsets;
     result->mip_sizes = sizes_arr;
     return result;
+}
+
+TF_API TfCompressed* tf_load_dds(const wchar_t* path) {
+    size_t file_size = 0;
+    uint8_t* file_data = read_file(path, &file_size);
+    if (!file_data) return nullptr;
+    TfCompressed* result = parse_dds_buffer(file_data, file_size);
+    free(file_data);
+    return result;
+}
+
+TF_API TfCompressed* tf_load_dds_memory(const uint8_t* data, size_t size) {
+    return parse_dds_buffer(data, size);
 }
 
 // ── Block decompression ──────────────────────────────────────────────────────

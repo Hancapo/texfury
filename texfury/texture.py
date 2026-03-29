@@ -190,20 +190,22 @@ class Texture:
                    min_mip_size: int = 4,
                    resize_to_pot: bool = True,
                    mip_filter: MipFilter = MipFilter.MITCHELL,
+                   recompress: bool = False,
                    name: str = "") -> Texture:
-        """Load an image from in-memory bytes and compress it.
+        """Load an image or DDS from in-memory bytes.
 
         Accepts the raw file bytes of any image format supported by
-        ``from_image`` (PNG, JPG, TGA, BMP, PSD, WebP, etc.).  If the
-        native decoder (stb_image) cannot handle the data, Pillow is
-        used as a fallback.
+        ``from_image`` (PNG, JPG, TGA, BMP, PSD, WebP, etc.) or DDS
+        files.  DDS files are loaded as-is by default; set
+        ``recompress=True`` to decompress and re-encode with the given
+        format and quality.
 
         Parameters
         ----------
         data : bytes
-            Raw image file bytes (e.g. the contents of a PNG file).
+            Raw file bytes (image or DDS).
         format : BCFormat
-            Target compression format.
+            Target compression format (ignored for DDS unless recompress=True).
         quality : float
             Compression quality 0.0 (fastest) to 1.0 (best).
         generate_mipmaps : bool
@@ -214,9 +216,30 @@ class Texture:
             Resize to nearest power-of-two if needed.
         mip_filter : MipFilter
             Downsampling filter for mipmap generation and POT resize.
+        recompress : bool
+            If True and input is DDS, decompress and re-encode with the
+            given format/quality. If False (default), DDS is loaded as-is.
         name : str
             Texture name.
         """
+        # DDS detection: magic bytes "DDS " (0x20534444)
+        if len(data) >= 4 and data[:4] == b'DDS ':
+            if not recompress:
+                return cls.from_dds_bytes(data, name=name)
+            # Recompress: load DDS → decompress to RGBA → compress
+            tex = cls.from_dds_bytes(data, name=name)
+            rgba, w, h = tex.to_rgba(0)
+            img = native.create_image(w, h, rgba)
+            try:
+                return cls._compress_image(img, format=format, quality=quality,
+                                            generate_mipmaps=generate_mipmaps,
+                                            min_mip_size=min_mip_size,
+                                            resize_to_pot=resize_to_pot,
+                                            mip_filter=mip_filter,
+                                            name=name or tex.name)
+            finally:
+                native.free_image(img)
+
         # Try native decoder first (stb_image)
         try:
             img = native.load_image_memory(data)
@@ -280,6 +303,15 @@ class Texture:
             name = path.stem.lower()
 
         c = native.load_dds(str(path.resolve()))
+        try:
+            return cls._from_compressed_handle(c, name)
+        finally:
+            native.free_compressed(c)
+
+    @classmethod
+    def from_dds_bytes(cls, data: bytes, *, name: str = "") -> Texture:
+        """Load a DDS texture from in-memory bytes."""
+        c = native.load_dds_memory(data)
         try:
             return cls._from_compressed_handle(c, name)
         finally:
@@ -411,22 +443,7 @@ class Texture:
 
     def _to_compressed_handle(self):
         """Build a native TfCompressed handle from this texture's data."""
-        import ctypes
-        # We need to pass the data to the native layer. Create a TfCompressed
-        # by saving to DDS and loading back (roundtrip via memory).
-        dds = self.to_dds_bytes()
-        # Write to temp file and load
-        import tempfile, os
-        fd, tmp = tempfile.mkstemp(suffix=".dds")
-        try:
-            os.write(fd, dds)
-            os.close(fd)
-            return native.load_dds(tmp)
-        finally:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+        return native.load_dds_memory(self.to_dds_bytes())
 
     @classmethod
     def _compress_image(cls, img, *, format: BCFormat, quality: float,
