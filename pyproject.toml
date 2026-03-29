@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "texfury"
-version = "1.4.0"
+version = "1.4.1"
 description = "Fast image-to-DDS conversion and YTD texture dictionary toolkit"
 requires-python = ">=3.10"
 readme = "README.md"
