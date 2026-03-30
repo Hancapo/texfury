@@ -338,6 +338,7 @@ class ITD:
         quality: float = 0.7,
         min_mip_size: int = 4,
         mip_filter: MipFilter = MipFilter.MITCHELL,
+        ignore: set[str] | list[str] | None = None,
         on_progress: Callable[[int, int, str], None] | None = None,
     ) -> list[dict]:
         """Fix common texture issues in-place.
@@ -359,6 +360,9 @@ class ITD:
             Minimum dimension for the smallest mip level.
         mip_filter : MipFilter
             Downsampling filter for mipmap generation and POT resize.
+        ignore : set or list of str, optional
+            Texture names to skip.  These textures will not be
+            inspected or modified.
         on_progress : callable, optional
             ``(current, total, texture_name)`` callback.
         """
@@ -366,10 +370,14 @@ class ITD:
 
         report: list[dict] = []
         total = len(self._textures)
+        skip = set(ignore) if ignore else set()
 
         for idx, tex in enumerate(self._textures):
             if on_progress:
                 on_progress(idx + 1, total, tex.name)
+
+            if tex.name in skip:
+                continue
 
             fixes: list[str] = []
 
