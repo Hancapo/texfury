@@ -495,8 +495,6 @@ path = create_dict_from_folder(
 | `mip_filter` | `MITCHELL` | Downsampling filter for mipmaps |
 | `on_progress` | `None` | Callback `(current, total, name)` |
 
-> `create_ytd_from_folder` is available as a backward-compatible alias.
-
 #### `batch_convert(folder, output_dir, *, format, quality, generate_mipmaps, min_mip_size, mip_filter, on_progress)`
 
 Convert all images in a folder to individual DDS files.
@@ -525,8 +523,6 @@ extract_dict("vehicles.ytd")
 
 extract_dict("vehicles.ytd", "my_folder/")
 ```
-
-> `extract_ytd` is available as a backward-compatible alias.
 
 ---
 

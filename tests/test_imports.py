@@ -5,15 +5,9 @@ from texfury import (
     Texture,
     Game, ITD,
     create_dict_from_folder, batch_convert, extract_dict,
-    create_ytd_from_folder, extract_ytd,
     has_transparency, is_power_of_two, next_power_of_two,
     pot_dimensions, image_dimensions,
 )
-
-
-def test_backward_compatible_aliases():
-    assert create_ytd_from_folder is create_dict_from_folder
-    assert extract_ytd is extract_dict
 
 
 def test_game_enum_values():

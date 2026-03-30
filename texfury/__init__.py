@@ -17,10 +17,6 @@ from texfury.utils import (
     image_dimensions,
 )
 
-# Backward-compatible aliases
-create_ytd_from_folder = create_dict_from_folder
-extract_ytd = extract_dict
-
 __version__ = "1.4.0"
 
 __all__ = [
@@ -34,9 +30,6 @@ __all__ = [
     "create_dict_from_folder",
     "batch_convert",
     "extract_dict",
-    # Backward-compatible aliases
-    "create_ytd_from_folder",
-    "extract_ytd",
     "has_transparency",
     "is_power_of_two",
     "next_power_of_two",
