@@ -426,6 +426,9 @@ Automatically repair common issues in a loaded texture dictionary:
 td = ITD.load("vehicles.ytd")
 report = td.fix_textures()
 
+# Skip specific textures
+report = td.fix_textures(ignore=["glass_d", "decal_n"])
+
 for entry in report:
     print(f"{entry['name']}: {', '.join(entry['fixes'])}")
 
@@ -436,6 +439,8 @@ Fixes applied:
 - **Non-power-of-two** dimensions are resized to nearest POT
 - **Missing mipmaps** are regenerated
 - **Format optimization** — opaque BC3/BC7 textures are switched to BC1, transparent BC1 textures are switched to BC3
+
+The `ignore` parameter accepts a list or set of texture names to skip.
 
 #### Inspecting Without Loading Data
 
