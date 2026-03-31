@@ -221,6 +221,37 @@ class ITD:
             existing.add(lower)
             log.debug("merge: added %s", tex.name)
 
+    @staticmethod
+    def merge_many(
+        paths: list[str | Path],
+        *,
+        game: Game | None = None,
+        overwrite: bool = False,
+    ) -> ITD:
+        """Load and merge multiple texture dictionaries into one.
+
+        Parameters
+        ----------
+        paths : list of str or Path
+            Paths to texture dictionaries to merge.
+        game : Game, optional
+            Target game format. If None, uses the game of the first file.
+        overwrite : bool
+            If True, later files overwrite earlier duplicates.
+            If False (default), first occurrence wins.
+        """
+        if not paths:
+            raise ValueError("paths must not be empty")
+        result = ITD.load(paths[0])
+        if game is not None:
+            result._game = game
+        log.info("merge_many: starting with %s (%d textures)", paths[0], len(result))
+        for p in paths[1:]:
+            other = ITD.load(p)
+            result.merge(other, overwrite=overwrite)
+            log.info("merge_many: merged %s (%d textures)", p, len(other))
+        return result
+
     # ── Lookup ──────────────────────────────────────────────────────────
 
     def get(self, name: str) -> Texture:

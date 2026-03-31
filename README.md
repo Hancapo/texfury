@@ -489,6 +489,22 @@ td1.merge(td2, overwrite=True)       # replace duplicates
 td1.save("combined.ytd")
 ```
 
+#### Merging Multiple Dictionaries
+
+Load and merge several texture dictionaries at once:
+
+```python
+td = ITD.merge_many([
+    "body.ytd",
+    "extras.ytd",
+    "decals.ytd",
+])
+td.save("combined.ytd")
+
+# With a specific game and overwrite duplicates
+td = ITD.merge_many(paths, game=Game.GTA4, overwrite=True)
+```
+
 #### Inspecting Without Loading Data
 
 ```python
