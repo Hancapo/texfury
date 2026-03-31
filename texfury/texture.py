@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import struct
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import Callable
+
+log = logging.getLogger("texfury")
 
 from texfury import _native as native
 from texfury.formats import (
     BCFormat, MipFilter, BC_TO_DXGI, BC_TO_FOURCC, FOURCC_DX10,
     is_block_compressed, pixel_byte_size, row_pitch,
 )
-
-if TYPE_CHECKING:
-    pass
 
 # Try importing Pillow (optional)
 try:
@@ -125,7 +125,7 @@ class Texture:
 
     @classmethod
     def from_image(cls, source: str | Path, *,
-                   format: BCFormat = BCFormat.BC7,
+                   format: BCFormat = BCFormat.BC1,
                    quality: float = 0.7,
                    generate_mipmaps: bool = True,
                    min_mip_size: int = 4,
@@ -159,11 +159,13 @@ class Texture:
 
         # Try native loader first (stb_image: PNG, JPG, TGA, BMP, PSD, WebP, etc.)
         # If it fails, fall back to Pillow for formats stb doesn't support (TIFF, etc.)
+        log.debug("from_image: %s → %s q=%.2f", name, format.name, quality)
         try:
             img = native.load_image(str(path.resolve()))
         except OSError:
             if not _HAS_PIL:
                 raise
+            log.debug("stb_image failed, falling back to Pillow")
             return cls.from_pil(PILImage.open(path), format=format,
                                 quality=quality,
                                 generate_mipmaps=generate_mipmaps,
@@ -184,7 +186,7 @@ class Texture:
 
     @classmethod
     def from_bytes(cls, data: bytes, *,
-                   format: BCFormat = BCFormat.BC7,
+                   format: BCFormat = BCFormat.BC1,
                    quality: float = 0.7,
                    generate_mipmaps: bool = True,
                    min_mip_size: int = 4,
@@ -223,6 +225,7 @@ class Texture:
             Texture name.
         """
         # DDS detection: magic bytes "DDS " (0x20534444)
+        log.debug("from_bytes: %d bytes, format=%s, recompress=%s", len(data), format.name, recompress)
         if len(data) >= 4 and data[:4] == b'DDS ':
             if not recompress:
                 return cls.from_dds_bytes(data, name=name)
@@ -267,7 +270,7 @@ class Texture:
 
     @classmethod
     def from_pil(cls, image, *,
-                 format: BCFormat = BCFormat.BC7,
+                 format: BCFormat = BCFormat.BC1,
                  quality: float = 0.7,
                  generate_mipmaps: bool = True,
                  min_mip_size: int = 4,
@@ -352,6 +355,7 @@ class Texture:
 
     def save_dds(self, path: str | Path) -> None:
         """Write this texture as a DDS file."""
+        log.debug("save_dds: %s (%s %dx%d)", path, self._format.name, self._width, self._height)
         Path(path).write_bytes(self.to_dds_bytes())
 
     def to_dds_bytes(self) -> bytes:
@@ -439,6 +443,92 @@ class Texture:
 
         return warnings
 
+    # ── Transforms ────────────────────────────────────────────────────────
+
+    def resize(self, width: int, height: int, *,
+               quality: float = 0.7,
+               generate_mipmaps: bool = True,
+               min_mip_size: int = 4,
+               mip_filter: MipFilter = MipFilter.MITCHELL) -> Texture:
+        """Resize this texture to new dimensions.
+
+        Decompresses, resizes, and recompresses with the same format.
+
+        Parameters
+        ----------
+        width, height : int
+            Target dimensions.
+        quality : float
+            Compression quality for recompression.
+        generate_mipmaps : bool
+            Regenerate mipmap chain after resize.
+        min_mip_size : int
+            Minimum dimension for smallest mip level.
+        mip_filter : MipFilter
+            Resampling filter.
+        """
+        rgba, rw, rh = self.to_rgba(0)
+        img = native.create_image(rw, rh, rgba)
+        try:
+            resized = native.resize(img, width, height, int(mip_filter))
+            try:
+                tex = self._compress_image(
+                    resized,
+                    format=self._format,
+                    quality=quality,
+                    generate_mipmaps=generate_mipmaps,
+                    min_mip_size=min_mip_size,
+                    resize_to_pot=False,
+                    mip_filter=mip_filter,
+                    name=self._name,
+                )
+                log.debug("resize: %s %dx%d → %dx%d", self._name, rw, rh, width, height)
+                return tex
+            finally:
+                native.free_image(resized)
+        finally:
+            native.free_image(img)
+
+    def to_format(self, format: BCFormat, *,
+                  quality: float = 0.7,
+                  generate_mipmaps: bool = True,
+                  min_mip_size: int = 4,
+                  mip_filter: MipFilter = MipFilter.MITCHELL) -> Texture:
+        """Recompress this texture to a different format.
+
+        Decompresses to RGBA and recompresses with the new format.
+
+        Parameters
+        ----------
+        format : BCFormat
+            Target format.
+        quality : float
+            Compression quality.
+        generate_mipmaps : bool
+            Regenerate mipmap chain.
+        min_mip_size : int
+            Minimum dimension for smallest mip level.
+        mip_filter : MipFilter
+            Downsampling filter for mipmaps.
+        """
+        rgba, w, h = self.to_rgba(0)
+        img = native.create_image(w, h, rgba)
+        try:
+            tex = self._compress_image(
+                img,
+                format=format,
+                quality=quality,
+                generate_mipmaps=generate_mipmaps,
+                min_mip_size=min_mip_size,
+                resize_to_pot=False,
+                mip_filter=mip_filter,
+                name=self._name,
+            )
+            log.debug("to_format: %s %s → %s", self._name, self._format.name, format.name)
+            return tex
+        finally:
+            native.free_image(img)
+
     # ── Internal ──────────────────────────────────────────────────────────
 
     def _to_compressed_handle(self):
@@ -482,6 +572,19 @@ class Texture:
         offsets = [native.compressed_mip_offset(c, i) for i in range(mip_count)]
         sizes = [native.compressed_mip_size(c, i) for i in range(mip_count)]
         return cls(data, width, height, fmt, mip_count, offsets, sizes, name)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Texture):
+            return NotImplemented
+        return (self._width == other._width
+                and self._height == other._height
+                and self._format == other._format
+                and self._mip_count == other._mip_count
+                and self._data == other._data)
+
+    def __hash__(self) -> int:
+        return hash((self._width, self._height, self._format,
+                     self._mip_count, len(self._data)))
 
     def __repr__(self) -> str:
         return (f"Texture(name={self._name!r}, {self._width}x{self._height}, "
