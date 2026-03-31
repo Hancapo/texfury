@@ -182,7 +182,7 @@ Load an image file and compress it.
 ```python
 tex = Texture.from_image(
     "photo.png",
-    format=BCFormat.BC7,            # default
+    format=BCFormat.BC1,            # default
     quality=0.7,                    # 0.0 = fastest, 1.0 = best quality
     generate_mipmaps=True,          # default
     min_mip_size=4,                 # smallest mip dimension (default: 4)
@@ -279,6 +279,25 @@ Decompress to a Pillow `Image` object. Requires Pillow.
 ```python
 pil_image = tex.to_pil()
 pil_image.save("preview.png")
+```
+
+#### Transforms
+
+##### `tex.resize(width, height, *, quality, generate_mipmaps, min_mip_size, mip_filter)`
+
+Resize a texture to new dimensions. Decompresses, resizes, and recompresses with the same format.
+
+```python
+small = tex.resize(128, 128, quality=0.8)
+small.save_dds("small.dds")
+```
+
+##### `tex.to_format(format, *, quality, generate_mipmaps, min_mip_size, mip_filter)`
+
+Recompress a texture to a different format.
+
+```python
+bc1_tex = tex.to_format(BCFormat.BC1, quality=0.7)
 ```
 
 #### Inspection
@@ -441,6 +460,34 @@ Fixes applied:
 - **Format optimization** — opaque BC3/BC7 textures are switched to BC1, transparent BC1 textures are switched to BC3
 
 The `ignore` parameter accepts a list or set of texture names to skip.
+
+#### Converting Between Games
+
+Convert a texture dictionary to a different game format. Textures are recompressed only if the target game doesn't support their format.
+
+```python
+td = ITD.load("vehicles.ytd")       # GTA5
+report = td.convert(Game.GTA4)       # BC7 → BC1, unsupported formats adapted
+td.save("vehicles.wtd")
+
+for r in report:
+    print(f"{r['name']}: {r['old_format']} → {r['new_format']}")
+```
+
+Between GTA5, GEN9, and RDR2, no recompression is needed — only the container format changes.
+
+#### Merging Dictionaries
+
+Combine textures from two dictionaries:
+
+```python
+td1 = ITD.load("body.ytd")
+td2 = ITD.load("extras.ytd")
+
+td1.merge(td2)                       # skip duplicates
+td1.merge(td2, overwrite=True)       # replace duplicates
+td1.save("combined.ytd")
+```
 
 #### Inspecting Without Loading Data
 
