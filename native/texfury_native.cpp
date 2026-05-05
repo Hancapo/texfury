@@ -70,9 +70,10 @@ enum TfBCFormat {
     TF_BC5 = 3,
     TF_BC7 = 4,
     TF_A8R8G8B8 = 5,     // Uncompressed 32-bit BGRA
-    // New block-compressed (not supported by rdo_bc_encoder)
+    // Additional block-compressed formats
     TF_BC2 = 6,
     TF_BC6H = 7,
+    TF_BC1A = 8,
     // Uncompressed — 32-bit
     TF_R8G8B8A8 = 10,
     TF_B5G6R5 = 11,
@@ -126,7 +127,7 @@ static void ensure_init() {
 
 static bool is_block_compressed(TfBCFormat fmt) {
     switch (fmt) {
-        case TF_BC1: case TF_BC2: case TF_BC3:
+        case TF_BC1: case TF_BC1A: case TF_BC2: case TF_BC3:
         case TF_BC4: case TF_BC5: case TF_BC6H: case TF_BC7:
             return true;
         default:
@@ -136,7 +137,7 @@ static bool is_block_compressed(TfBCFormat fmt) {
 
 static int block_byte_size(TfBCFormat fmt) {
     switch (fmt) {
-        case TF_BC1: case TF_BC4: return 8;
+        case TF_BC1: case TF_BC1A: case TF_BC4: return 8;
         default: return 16; // BC2, BC3, BC5, BC6H, BC7
     }
 }
@@ -171,6 +172,19 @@ static size_t calc_mip_size(int w, int h, TfBCFormat fmt) {
     return (size_t)w * h * pixel_byte_size(fmt);
 }
 
+static uint16_t pack_565(uint8_t r, uint8_t g, uint8_t b) {
+    return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+static void unpack_565(uint16_t c, uint8_t& r, uint8_t& g, uint8_t& b) {
+    uint8_t r5 = (uint8_t)((c >> 11) & 31);
+    uint8_t g6 = (uint8_t)((c >> 5) & 63);
+    uint8_t b5 = (uint8_t)(c & 31);
+    r = (uint8_t)((r5 << 3) | (r5 >> 2));
+    g = (uint8_t)((g6 << 2) | (g6 >> 4));
+    b = (uint8_t)((b5 << 3) | (b5 >> 2));
+}
+
 static int calc_mip_count(int w, int h, int min_dim) {
     int count = 1;
     while (w > min_dim || h > min_dim) {
@@ -189,10 +203,20 @@ static uint32_t next_pot(uint32_t v) {
     return v + 1;
 }
 
+static uint32_t nearest_pot(uint32_t v) {
+    if (v == 0) return 1;
+    uint32_t upper = next_pot(v);
+    if (upper == v) return v;
+    uint32_t lower = upper >> 1;
+    return (v - lower < upper - v) ? lower : upper;
+}
+
 // Map TfBCFormat → DXGI_FORMAT
 static DXGI_FORMAT tf_to_dxgi(TfBCFormat fmt) {
     switch (fmt) {
-        case TF_BC1: return DXGI_FORMAT_BC1_UNORM;
+        case TF_BC1:
+        case TF_BC1A:
+            return DXGI_FORMAT_BC1_UNORM;
         case TF_BC2: return DXGI_FORMAT_BC2_UNORM;
         case TF_BC3: return DXGI_FORMAT_BC3_UNORM;
         case TF_BC4: return DXGI_FORMAT_BC4_UNORM;
@@ -252,7 +276,7 @@ static int dxgi_to_tf(uint32_t dxgi) {
 // FourCC mapping for legacy DDS
 static int fourcc_to_tf(uint32_t fourcc) {
     if (fourcc == 0x31545844) return TF_BC1; // "DXT1"
-    if (fourcc == 0x33545844) return TF_BC3; // "DXT3" → treat as BC3
+    if (fourcc == 0x33545844) return TF_BC2; // "DXT3"
     if (fourcc == 0x35545844) return TF_BC3; // "DXT5"
     if (fourcc == 0x31495441) return TF_BC4; // "ATI1"
     if (fourcc == 0x32495441) return TF_BC5; // "ATI2"
@@ -330,6 +354,7 @@ TF_API TfImage* tf_load_image_memory(const uint8_t* data, size_t size) {
 }
 
 TF_API TfImage* tf_create_image(int width, int height, const uint8_t* rgba_data) {
+    if (width <= 0 || height <= 0 || !rgba_data) return nullptr;
     size_t sz = (size_t)width * height * 4;
     uint8_t* pixels = (uint8_t*)malloc(sz);
     if (!pixels) return nullptr;
@@ -377,6 +402,10 @@ TF_API int tf_next_power_of_two(int v) {
     return (int)next_pot((uint32_t)v);
 }
 
+TF_API int tf_nearest_power_of_two(int v) {
+    return (int)nearest_pot((uint32_t)v);
+}
+
 // ── Image transforms ─────────────────────────────────────────────────────────
 
 TF_API TfImage* tf_resize(const TfImage* img, int new_w, int new_h, int filter) {
@@ -406,8 +435,8 @@ TF_API TfImage* tf_resize(const TfImage* img, int new_w, int new_h, int filter) 
 
 TF_API TfImage* tf_resize_to_pot(const TfImage* img, int filter) {
     if (!img) return nullptr;
-    int pw = (int)next_pot((uint32_t)img->width);
-    int ph = (int)next_pot((uint32_t)img->height);
+    int pw = (int)nearest_pot((uint32_t)img->width);
+    int ph = (int)nearest_pot((uint32_t)img->height);
     if (pw == img->width && ph == img->height) {
         return tf_create_image(img->width, img->height, img->pixels);
     }
@@ -433,7 +462,7 @@ static uint16_t float_to_half(float f) {
 // Convert RGBA u8 pixels to the target uncompressed format.
 // Returns malloc'd buffer and sets *out_size. Returns nullptr on unsupported fmt.
 static uint8_t* convert_pixels(const uint8_t* rgba, int w, int h,
-                                TfBCFormat fmt, size_t* out_size) {
+                               TfBCFormat fmt, size_t* out_size) {
     size_t px = (size_t)w * h;
     size_t bpp = pixel_byte_size(fmt);
     size_t sz = px * bpp;
@@ -540,6 +569,121 @@ static uint8_t* convert_pixels(const uint8_t* rgba, int w, int h,
     return dst;
 }
 
+static void encode_bc1a_block(uint8_t* dst, const uint8_t block[16 * 4],
+                              int bc1_quality_level) {
+    bool has_transparent = false;
+    int opaque_count = 0;
+    for (int i = 0; i < 16; i++) {
+        if (block[i * 4 + 3] < 128) {
+            has_transparent = true;
+        } else {
+            opaque_count++;
+        }
+    }
+
+    if (!has_transparent) {
+        rgbcx::encode_bc1((uint32_t)bc1_quality_level, dst, block, false, false);
+        return;
+    }
+
+    if (opaque_count == 0) {
+        uint16_t c0 = 0, c1 = 0;
+        uint32_t selectors = 0xFFFFFFFFu;
+        memcpy(dst, &c0, 2);
+        memcpy(dst + 2, &c1, 2);
+        memcpy(dst + 4, &selectors, 4);
+        return;
+    }
+
+    int min_idx = -1, max_idx = -1;
+    int min_luma = 1 << 30, max_luma = -1;
+    for (int i = 0; i < 16; i++) {
+        if (block[i * 4 + 3] < 128) continue;
+        int r = block[i * 4 + 0];
+        int g = block[i * 4 + 1];
+        int b = block[i * 4 + 2];
+        int luma = 77 * r + 150 * g + 29 * b;
+        if (luma < min_luma) {
+            min_luma = luma;
+            min_idx = i;
+        }
+        if (luma > max_luma) {
+            max_luma = luma;
+            max_idx = i;
+        }
+    }
+
+    uint16_t c0 = pack_565(block[min_idx * 4 + 0],
+                           block[min_idx * 4 + 1],
+                           block[min_idx * 4 + 2]);
+    uint16_t c1 = pack_565(block[max_idx * 4 + 0],
+                           block[max_idx * 4 + 1],
+                           block[max_idx * 4 + 2]);
+
+    if (c0 > c1) {
+        std::swap(c0, c1);
+    }
+
+    uint8_t pr[3], pg[3], pb[3];
+    unpack_565(c0, pr[0], pg[0], pb[0]);
+    unpack_565(c1, pr[1], pg[1], pb[1]);
+    pr[2] = (uint8_t)(((int)pr[0] + (int)pr[1]) / 2);
+    pg[2] = (uint8_t)(((int)pg[0] + (int)pg[1]) / 2);
+    pb[2] = (uint8_t)(((int)pb[0] + (int)pb[1]) / 2);
+
+    uint32_t selectors = 0;
+    for (int i = 0; i < 16; i++) {
+        uint32_t sel = 3;
+        if (block[i * 4 + 3] >= 128) {
+            int best_err = 1 << 30;
+            for (uint32_t j = 0; j < 3; j++) {
+                int dr = (int)block[i * 4 + 0] - (int)pr[j];
+                int dg = (int)block[i * 4 + 1] - (int)pg[j];
+                int db = (int)block[i * 4 + 2] - (int)pb[j];
+                int err = dr * dr + dg * dg + db * db;
+                if (err < best_err) {
+                    best_err = err;
+                    sel = j;
+                }
+            }
+        }
+        selectors |= (sel << (i * 2));
+    }
+
+    memcpy(dst, &c0, 2);
+    memcpy(dst + 2, &c1, 2);
+    memcpy(dst + 4, &selectors, 4);
+}
+
+static uint8_t* compress_bc1a(const uint8_t* rgba, int w, int h,
+                              int bc1_quality_level, size_t* out_size) {
+    int bw = (w + 3) / 4;
+    int bh = (h + 3) / 4;
+    size_t size = (size_t)bw * bh * 8;
+    uint8_t* dst = (uint8_t*)malloc(size);
+    if (!dst) return nullptr;
+
+    uint8_t block[16 * 4];
+    for (int by = 0; by < bh; by++) {
+        for (int bx = 0; bx < bw; bx++) {
+            for (int y = 0; y < 4; y++) {
+                int py = std::min(by * 4 + y, h - 1);
+                for (int x = 0; x < 4; x++) {
+                    int px = std::min(bx * 4 + x, w - 1);
+                    memcpy(&block[(y * 4 + x) * 4],
+                           &rgba[((size_t)py * w + px) * 4], 4);
+                }
+            }
+
+            encode_bc1a_block(dst + ((size_t)by * bw + bx) * 8,
+                              block, bc1_quality_level);
+        }
+    }
+
+    *out_size = size;
+    return dst;
+}
+
 // Compress/convert a single mip level.
 // For BC formats: uses rdo_bc_encoder. For uncompressed: pixel conversion.
 // Returns malloc'd data and sets *out_size.
@@ -554,6 +698,14 @@ static uint8_t* compress_mip(const uint8_t* rgba, int w, int h,
     // BC2/BC6H not supported by rdo_bc_encoder
     if (fmt == TF_BC2 || fmt == TF_BC6H) return nullptr;
 
+    int bc1_quality_level = (int)(quality * rgbcx::MAX_LEVEL);
+    if (bc1_quality_level > (int)rgbcx::MAX_LEVEL)
+        bc1_quality_level = rgbcx::MAX_LEVEL;
+
+    if (fmt == TF_BC1A) {
+        return compress_bc1a(rgba, w, h, bc1_quality_level, out_size);
+    }
+
     // Build image_u8 from RGBA pixels
     utils::image_u8 src_img(w, h);
     memcpy(src_img.get_pixels().data(), rgba, (size_t)w * h * 4);
@@ -564,10 +716,12 @@ static uint8_t* compress_mip(const uint8_t* rgba, int w, int h,
     rp.m_rdo_lambda = 0.0f;  // no RDO — just plain compression
     rp.m_status_output = false;
     rp.m_use_bc7e = true;
-    rp.m_bc1_quality_level = (int)(quality * rgbcx::MAX_LEVEL);
+    if (fmt == TF_BC1) {
+        rp.m_use_bc1_3color_mode = false;
+        rp.m_use_bc1_3color_mode_for_black = false;
+    }
+    rp.m_bc1_quality_level = bc1_quality_level;
     rp.m_bc7_uber_level = (int)(quality * 6.0f);
-    if (rp.m_bc1_quality_level > (int)rgbcx::MAX_LEVEL)
-        rp.m_bc1_quality_level = rgbcx::MAX_LEVEL;
     if (rp.m_bc7_uber_level > 6) rp.m_bc7_uber_level = 6;
 
     rdo_bc::rdo_bc_encoder encoder;
@@ -667,6 +821,48 @@ TF_API TfCompressed* tf_compress(const TfImage* img, int format,
     return result;
 }
 
+TF_API TfCompressed* tf_create_compressed(const uint8_t* data, size_t size,
+                                          int width, int height, int format,
+                                          int mip_count,
+                                          const size_t* mip_offsets,
+                                          const size_t* mip_sizes) {
+    if (!data || size == 0 || width <= 0 || height <= 0 ||
+        mip_count <= 0 || !mip_offsets || !mip_sizes) {
+        return nullptr;
+    }
+
+    for (int i = 0; i < mip_count; i++) {
+        if (mip_offsets[i] > size || mip_sizes[i] > size - mip_offsets[i]) {
+            return nullptr;
+        }
+    }
+
+    uint8_t* data_copy = (uint8_t*)malloc(size);
+    size_t* offsets_copy = (size_t*)malloc((size_t)mip_count * sizeof(size_t));
+    size_t* sizes_copy = (size_t*)malloc((size_t)mip_count * sizeof(size_t));
+    if (!data_copy || !offsets_copy || !sizes_copy) {
+        free(data_copy);
+        free(offsets_copy);
+        free(sizes_copy);
+        return nullptr;
+    }
+
+    memcpy(data_copy, data, size);
+    memcpy(offsets_copy, mip_offsets, (size_t)mip_count * sizeof(size_t));
+    memcpy(sizes_copy, mip_sizes, (size_t)mip_count * sizeof(size_t));
+
+    auto* result = new TfCompressed();
+    result->data = data_copy;
+    result->size = size;
+    result->width = width;
+    result->height = height;
+    result->format = format;
+    result->mip_count = mip_count;
+    result->mip_offsets = offsets_copy;
+    result->mip_sizes = sizes_copy;
+    return result;
+}
+
 TF_API void tf_free_compressed(TfCompressed* c) {
     if (!c) return;
     free(c->data);
@@ -753,7 +949,8 @@ static uint8_t* build_dds_file(const TfCompressed* c, size_t* out_total) {
     // Legacy FourCC works for BC1 (DXT1), BC2 (DXT3), BC3 (DXT5).
     // Legacy pixel format works for A8R8G8B8 (32-bit BGRA).
     // Everything else needs DX10 extended header.
-    bool legacy_fourcc = (fmt == TF_BC1 || fmt == TF_BC2 || fmt == TF_BC3);
+    bool legacy_fourcc = (fmt == TF_BC1 || fmt == TF_BC1A ||
+                          fmt == TF_BC2 || fmt == TF_BC3);
     bool legacy_a8r8g8b8 = (fmt == TF_A8R8G8B8);
     bool use_dx10 = !legacy_fourcc && !legacy_a8r8g8b8;
 
@@ -780,7 +977,7 @@ static uint8_t* build_dds_file(const TfCompressed* c, size_t* out_total) {
         hdr.ddspf.flags = DDPF_FOURCC;
         if (use_dx10) {
             hdr.ddspf.fourCC = 0x30315844; // "DX10"
-        } else if (fmt == TF_BC1) {
+        } else if (fmt == TF_BC1 || fmt == TF_BC1A) {
             hdr.ddspf.fourCC = 0x31545844; // "DXT1"
         } else if (fmt == TF_BC2) {
             hdr.ddspf.fourCC = 0x33545844; // "DXT3"
@@ -895,9 +1092,18 @@ static TfCompressed* parse_dds_buffer(const uint8_t* file_data, size_t file_size
     }
 
     size_t avail = file_size - pixel_offset;
-    if (avail < total) { total = avail; }
+    if (avail < total) {
+        free(offsets);
+        free(sizes_arr);
+        return nullptr;
+    }
 
     uint8_t* data = (uint8_t*)malloc(total);
+    if (!data) {
+        free(offsets);
+        free(sizes_arr);
+        return nullptr;
+    }
     memcpy(data, file_data + pixel_offset, total);
 
     auto* result = new TfCompressed();
@@ -1085,7 +1291,18 @@ static uint8_t* decompress_mip(const uint8_t* src, int w, int h, TfBCFormat fmt)
 
             switch (fmt) {
                 case TF_BC1:
+                case TF_BC1A:
                     rgbcx::unpack_bc1(block, block_out, true);
+                    break;
+                case TF_BC2:
+                    {
+                        rgbcx::unpack_bc1(block + 8, block_out, false);
+                        for (int i = 0; i < 16; i++) {
+                            uint8_t packed = block[i >> 1];
+                            uint8_t alpha4 = (i & 1) ? (packed >> 4) : (packed & 0x0F);
+                            block_out[i * 4 + 3] = (uint8_t)(alpha4 * 17);
+                        }
+                    }
                     break;
                 case TF_BC3:
                     rgbcx::unpack_bc3(block, block_out);
@@ -1144,7 +1361,13 @@ TF_API uint8_t* tf_decompress(const TfCompressed* c, int mip, int* out_w, int* o
         mh = (mh > 1) ? mh / 2 : 1;
     }
 
-    const uint8_t* src = c->data + c->mip_offsets[mip];
+    size_t mip_off = c->mip_offsets[mip];
+    size_t mip_size = c->mip_sizes[mip];
+    if (mip_off > c->size || mip_size > c->size - mip_off) {
+        return nullptr;
+    }
+
+    const uint8_t* src = c->data + mip_off;
     uint8_t* out = decompress_mip(src, mw, mh, (TfBCFormat)c->format);
     if (out) {
         if (out_w) *out_w = mw;

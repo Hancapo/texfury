@@ -1,11 +1,54 @@
 """Test Texture creation, serialization, and decompression."""
 
 from pathlib import Path
+import struct
 
 import pytest
 
 from texfury import Texture, BCFormat, MipFilter
 from texfury.texture_dict import ITD, Game
+
+
+def _png_rgba_bytes(width: int, height: int, pixels: bytes) -> bytes:
+    import zlib
+
+    raw = b"".join(
+        b"\x00" + pixels[y * width * 4:(y + 1) * width * 4]
+        for y in range(height)
+    )
+
+    def chunk(ctype: bytes, data: bytes) -> bytes:
+        payload = ctype + data
+        return (
+            struct.pack(">I", len(data))
+            + payload
+            + struct.pack(">I", zlib.crc32(payload) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _dds_fourcc_bytes(width: int, height: int, fourcc: bytes,
+                      pixel_data: bytes) -> bytes:
+    hdr = bytearray(124)
+    struct.pack_into("<I", hdr, 0, 124)
+    struct.pack_into("<I", hdr, 4, 0x1 | 0x2 | 0x4 | 0x1000 | 0x80000)
+    struct.pack_into("<I", hdr, 8, height)
+    struct.pack_into("<I", hdr, 12, width)
+    struct.pack_into("<I", hdr, 16, len(pixel_data))
+    struct.pack_into("<I", hdr, 20, 1)
+    struct.pack_into("<I", hdr, 24, 1)
+    struct.pack_into("<I", hdr, 72, 32)
+    struct.pack_into("<I", hdr, 76, 0x4)
+    hdr[80:84] = fourcc
+    struct.pack_into("<I", hdr, 104, 0x1000)
+    return b"DDS " + bytes(hdr) + pixel_data
 
 
 class TestFromImage:
@@ -27,7 +70,7 @@ class TestFromImage:
 
     def test_all_native_formats(self, png_64):
         """Test all formats supported by the native compressor."""
-        native_formats = (BCFormat.BC1, BCFormat.BC3, BCFormat.BC4,
+        native_formats = (BCFormat.BC1, BCFormat.BC1A, BCFormat.BC3, BCFormat.BC4,
                           BCFormat.BC5, BCFormat.BC7, BCFormat.A8R8G8B8)
         for fmt in native_formats:
             tex = Texture.from_image(str(png_64), format=fmt)
@@ -108,6 +151,26 @@ class TestDdsRoundTrip:
         dds_bytes = tex.to_dds_bytes()
         assert dds_bytes == dds_path.read_bytes()
 
+    def test_dxt3_loads_as_bc2_with_explicit_alpha(self):
+        alpha = bytes([0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE])
+        color = struct.pack("<HHI", 0xFFFF, 0x0000, 0)
+        tex = Texture.from_dds_bytes(
+            _dds_fourcc_bytes(4, 4, b"DXT3", alpha + color),
+            name="dxt3",
+        )
+
+        rgba, w, h = tex.to_rgba()
+        assert tex.format == BCFormat.BC2
+        assert (w, h) == (4, 4)
+        assert list(rgba[3::4]) == [i * 17 for i in range(16)]
+
+    def test_truncated_dds_payload_is_rejected(self):
+        with pytest.raises(ValueError):
+            Texture.from_dds_bytes(
+                _dds_fourcc_bytes(4, 4, b"DXT1", b"\x00" * 7),
+                name="truncated",
+            )
+
 
 class TestDecompression:
     def test_to_rgba(self, png_128):
@@ -127,12 +190,72 @@ class TestDecompression:
 
     def test_all_native_formats_decompress(self, png_64):
         """Test decompression for all formats supported by the native compressor."""
-        native_formats = (BCFormat.BC1, BCFormat.BC3, BCFormat.BC4,
+        native_formats = (BCFormat.BC1, BCFormat.BC1A, BCFormat.BC3, BCFormat.BC4,
                           BCFormat.BC5, BCFormat.BC7, BCFormat.A8R8G8B8)
         for fmt in native_formats:
             tex = Texture.from_image(str(png_64), format=fmt)
             rgba, w, h = tex.to_rgba()
             assert len(rgba) == w * h * 4
+
+    def test_opaque_bc1_does_not_emit_punchthrough_alpha(self):
+        pixels = bytearray()
+        for i in range(16 * 16):
+            v = (i * 37) % 40
+            pixels.extend((v, v, v, 255))
+
+        tex = Texture.from_bytes(
+            _png_rgba_bytes(16, 16, bytes(pixels)),
+            format=BCFormat.BC1,
+            generate_mipmaps=False,
+            quality=1.0,
+        )
+        rgba, _, _ = tex.to_rgba()
+
+        assert set(rgba[3::4]) == {255}
+
+    def test_bc1a_preserves_binary_alpha(self):
+        pixels = bytearray()
+        for i in range(16 * 16):
+            alpha = 0 if i % 3 == 0 else 255
+            pixels.extend((255, 0, 0, alpha))
+
+        tex = Texture.from_bytes(
+            _png_rgba_bytes(16, 16, bytes(pixels)),
+            format=BCFormat.BC1A,
+            generate_mipmaps=False,
+        )
+        rgba, _, _ = tex.to_rgba()
+
+        assert tex.format == BCFormat.BC1A
+        assert set(rgba[3::4]) == {0, 255}
+        assert tex.has_transparency() is True
+
+    def test_bc1a_dds_reads_back_as_bc1(self):
+        pixels = bytes((255, 0, 0, 0)) * (4 * 4)
+        tex = Texture.from_bytes(
+            _png_rgba_bytes(4, 4, pixels),
+            format=BCFormat.BC1A,
+            generate_mipmaps=False,
+        )
+
+        loaded = Texture.from_dds_bytes(tex.to_dds_bytes(), name="bc1a")
+        rgba, _, _ = loaded.to_rgba()
+
+        assert loaded.format == BCFormat.BC1
+        assert set(rgba[3::4]) == {0}
+
+    def test_bc1_default_drops_source_alpha(self):
+        pixels = bytes((255, 0, 0, 0)) * (4 * 4)
+
+        tex = Texture.from_bytes(
+            _png_rgba_bytes(4, 4, pixels),
+            format=BCFormat.BC1,
+            generate_mipmaps=False,
+        )
+        rgba, _, _ = tex.to_rgba()
+
+        assert set(rgba[3::4]) == {255}
+        assert tex.has_transparency() is False
 
 
 class TestInspectDds:
@@ -216,9 +339,11 @@ class TestFixTextures:
         assert "BC3→BC1" in report[0]["fixes"][0]
         assert td.textures[0].format == BCFormat.BC1
 
-    def test_transparent_bc1_to_bc3(self, png_transparent):
+    def test_transparent_bc1_to_bc3(self):
         """Transparent texture in BC1 should be fixed to BC3."""
-        tex = Texture.from_image(str(png_transparent), format=BCFormat.BC1, name="alpha")
+        block = struct.pack("<HHI", 0, 0, 0xFFFFFFFF)
+        tex = Texture.from_dds_bytes(
+            _dds_fourcc_bytes(4, 4, b"DXT1", block), name="alpha")
         td = ITD(game=Game.GTA5)
         td.add(tex)
         report = td.fix_textures()
@@ -246,10 +371,12 @@ class TestFixTextures:
         report = td.fix_textures()
         assert len(report) == 0
 
-    def test_returns_report(self, png_64, png_transparent):
+    def test_returns_report(self, png_64):
         """Report lists only modified textures."""
         t1 = Texture.from_image(str(png_64), format=BCFormat.BC1, name="ok")
-        t2 = Texture.from_image(str(png_transparent), format=BCFormat.BC1, name="fix_me")
+        block = struct.pack("<HHI", 0, 0, 0xFFFFFFFF)
+        t2 = Texture.from_dds_bytes(
+            _dds_fourcc_bytes(4, 4, b"DXT1", block), name="fix_me")
         td = ITD(game=Game.GTA5)
         td.add(t1)
         td.add(t2)

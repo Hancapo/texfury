@@ -49,8 +49,8 @@ def next_power_of_two(value: int) -> int:
 
 def pot_dimensions(width: int, height: int) -> tuple[int, int]:
     """Return the nearest power-of-two dimensions for the given size."""
-    return (native.next_power_of_two(width),
-            native.next_power_of_two(height))
+    return (native.nearest_power_of_two(width),
+            native.nearest_power_of_two(height))
 
 
 def image_dimensions(source: str | Path) -> tuple[int, int, int]:

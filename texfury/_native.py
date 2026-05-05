@@ -75,6 +75,9 @@ _lib.tf_is_power_of_two.restype = ctypes.c_int
 _lib.tf_next_power_of_two.argtypes = [ctypes.c_int]
 _lib.tf_next_power_of_two.restype = ctypes.c_int
 
+_lib.tf_nearest_power_of_two.argtypes = [ctypes.c_int]
+_lib.tf_nearest_power_of_two.restype = ctypes.c_int
+
 # Image transforms
 _lib.tf_resize.argtypes = [TfImage, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 _lib.tf_resize.restype = TfImage
@@ -92,6 +95,18 @@ _lib.tf_compress.argtypes = [
     ctypes.c_int,      # mip_filter (MipFilter)
 ]
 _lib.tf_compress.restype = TfCompressed
+
+_lib.tf_create_compressed.argtypes = [
+    c_uint8_p,
+    ctypes.c_size_t,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    c_size_t_p,
+    c_size_t_p,
+]
+_lib.tf_create_compressed.restype = TfCompressed
 
 _lib.tf_free_compressed.argtypes = [TfCompressed]
 _lib.tf_free_compressed.restype = None
@@ -154,6 +169,11 @@ _lib.tf_free_buffer.restype = None
 
 # ── Python-friendly wrappers ─────────────────────────────────────────────────
 
+def _rgba_byte_size(width: int, height: int) -> int:
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be positive")
+    return width * height * 4
+
 def load_image(path: str) -> TfImage:
     h = _lib.tf_load_image(path)
     if not h:
@@ -168,6 +188,12 @@ def load_image_memory(data: bytes) -> TfImage:
     return h
 
 def create_image(width: int, height: int, rgba_data: bytes) -> TfImage:
+    expected = _rgba_byte_size(width, height)
+    if len(rgba_data) != expected:
+        raise ValueError(
+            f"RGBA buffer size mismatch: expected {expected} bytes, "
+            f"got {len(rgba_data)}"
+        )
     buf = (ctypes.c_uint8 * len(rgba_data)).from_buffer_copy(rgba_data)
     h = _lib.tf_create_image(width, height, buf)
     if not h:
@@ -199,6 +225,9 @@ def is_power_of_two(w: int, h: int) -> bool:
 def next_power_of_two(v: int) -> int:
     return _lib.tf_next_power_of_two(v)
 
+def nearest_power_of_two(v: int) -> int:
+    return _lib.tf_nearest_power_of_two(v)
+
 def resize(h: TfImage, w: int, hh: int, filter: int = 4) -> TfImage:
     r = _lib.tf_resize(h, w, hh, filter)
     if not r:
@@ -213,9 +242,37 @@ def resize_to_pot(h: TfImage, filter: int = 4) -> TfImage:
 
 def compress(h: TfImage, fmt: int, mipmaps: bool, min_mip: int,
              quality: float, mip_filter: int = 4) -> TfCompressed:
-    c = _lib.tf_compress(h, fmt, 1 if mipmaps else 0, min_mip, quality, mip_filter)
+    c = _lib.tf_compress(
+        h, fmt, 1 if mipmaps else 0, min_mip, quality, mip_filter,
+    )
     if not c:
         raise RuntimeError("Compression failed")
+    return c
+
+def create_compressed(data: bytes, width: int, height: int, fmt: int,
+                      mip_count: int, mip_offsets: list[int],
+                      mip_sizes: list[int]) -> TfCompressed:
+    if not data:
+        raise ValueError("compressed data must not be empty")
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be positive")
+    if mip_count <= 0:
+        raise ValueError("mip_count must be positive")
+    if len(mip_offsets) != mip_count or len(mip_sizes) != mip_count:
+        raise ValueError("mip offset/size counts must match mip_count")
+    for off, size in zip(mip_offsets, mip_sizes):
+        if off < 0 or size < 0 or off + size > len(data):
+            raise ValueError("mip offsets/sizes exceed compressed data length")
+
+    data_buf = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+    offset_buf = (ctypes.c_size_t * mip_count)(*mip_offsets)
+    size_buf = (ctypes.c_size_t * mip_count)(*mip_sizes)
+    c = _lib.tf_create_compressed(
+        data_buf, len(data), width, height, fmt, mip_count,
+        offset_buf, size_buf,
+    )
+    if not c:
+        raise RuntimeError("Failed to create compressed texture")
     return c
 
 def free_compressed(c: TfCompressed) -> None:
@@ -290,12 +347,22 @@ def decompress(c: TfCompressed, mip: int = 0) -> tuple[bytes, int, int]:
 def psnr(original: bytes, compressed: bytes, width: int, height: int,
          channels: int = 3) -> float:
     """Calculate PSNR between two RGBA images."""
+    expected = _rgba_byte_size(width, height)
+    if len(original) != expected or len(compressed) != expected:
+        raise ValueError(
+            f"RGBA buffer size mismatch: expected {expected} bytes"
+        )
     buf_a = (ctypes.c_uint8 * len(original)).from_buffer_copy(original)
     buf_b = (ctypes.c_uint8 * len(compressed)).from_buffer_copy(compressed)
     return _lib.tf_psnr(buf_a, buf_b, width, height, channels)
 
 def ssim(original: bytes, compressed: bytes, width: int, height: int) -> float:
     """Calculate luminance SSIM between two RGBA images."""
+    expected = _rgba_byte_size(width, height)
+    if len(original) != expected or len(compressed) != expected:
+        raise ValueError(
+            f"RGBA buffer size mismatch: expected {expected} bytes"
+        )
     buf_a = (ctypes.c_uint8 * len(original)).from_buffer_copy(original)
     buf_b = (ctypes.c_uint8 * len(compressed)).from_buffer_copy(compressed)
     return _lib.tf_ssim(buf_a, buf_b, width, height)

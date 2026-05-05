@@ -82,6 +82,7 @@ from texfury import BCFormat
 | Value | Alias | Write | Read | Description |
 |-------|-------|:-----:|:----:|-------------|
 | `BCFormat.BC1` | DXT1 | ✅ | ✅ | RGB, 8 bytes/block. No alpha. Smallest files. |
+| `BCFormat.BC1A` | DXT1a | ✅ | — | BC1/DXT1 with 1-bit punch-through alpha. Encodes as DXT1; read-back reports `BC1`. |
 | `BCFormat.BC2` | DXT3 | ❌ | ✅ | RGBA, 16 bytes/block. Explicit 4-bit alpha. |
 | `BCFormat.BC3` | DXT5 | ✅ | ✅ | RGBA, 16 bytes/block. Interpolated alpha. |
 | `BCFormat.BC4` | ATI1 | ✅ | ✅ | Single channel (R), 8 bytes/block. Grayscale/height maps. |

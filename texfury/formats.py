@@ -25,9 +25,10 @@ class BCFormat(IntEnum):
     BC7 = 4        # RGBA, 16 bytes/block. High quality, slower to encode.
     A8R8G8B8 = 5   # Uncompressed 32-bit BGRA (D3DFMT order).
 
-    # New block-compressed formats (not handled by the native compressor)
+    # Additional block-compressed formats
     BC2 = 6        # RGBA, 16 bytes/block (aka DXT3). Explicit 4-bit alpha.
     BC6H = 7       # HDR RGB, 16 bytes/block. Half-float. Cubemaps/lightmaps.
+    BC1A = 8       # DXT1/BC1 with 1-bit punch-through alpha.
 
     # Uncompressed — 32-bit
     R8G8B8A8 = 10  # 32-bit RGBA.
@@ -51,13 +52,14 @@ class BCFormat(IntEnum):
 # ── Block compression helpers ─────────────────────────────────────────────
 
 _BLOCK_COMPRESSED = frozenset({
-    BCFormat.BC1, BCFormat.BC2, BCFormat.BC3, BCFormat.BC4,
+    BCFormat.BC1, BCFormat.BC1A, BCFormat.BC2, BCFormat.BC3, BCFormat.BC4,
     BCFormat.BC5, BCFormat.BC6H, BCFormat.BC7,
 })
 
 # Bytes per 4x4 block for block-compressed formats.
 _BLOCK_BYTES: dict[BCFormat, int] = {
     BCFormat.BC1: 8,
+    BCFormat.BC1A: 8,
     BCFormat.BC2: 16,
     BCFormat.BC3: 16,
     BCFormat.BC4: 8,
@@ -199,6 +201,7 @@ class DXGIFormat(IntEnum):
 
 BC_TO_DXGI: dict[BCFormat, int] = {
     BCFormat.BC1: DXGIFormat.BC1_UNORM,
+    BCFormat.BC1A: DXGIFormat.BC1_UNORM,
     BCFormat.BC2: DXGIFormat.BC2_UNORM,
     BCFormat.BC3: DXGIFormat.BC3_UNORM,
     BCFormat.BC4: DXGIFormat.BC4_UNORM,
@@ -221,6 +224,7 @@ BC_TO_DXGI: dict[BCFormat, int] = {
 }
 
 DXGI_TO_BC: dict[int, BCFormat] = {v: k for k, v in BC_TO_DXGI.items()}
+DXGI_TO_BC[DXGIFormat.BC1_UNORM] = BCFormat.BC1
 
 
 # ── FourCC codes (legacy DDS / DX9) ──────────────────────────────────────
@@ -235,6 +239,7 @@ FOURCC_DX10 = 0x30315844  # "DX10" — signals DDS_HEADER_DXT10 extension
 
 BC_TO_FOURCC: dict[BCFormat, int] = {
     BCFormat.BC1: FOURCC_DXT1,
+    BCFormat.BC1A: FOURCC_DXT1,
     BCFormat.BC2: FOURCC_DXT3,
     BCFormat.BC3: FOURCC_DXT5,
     BCFormat.BC4: FOURCC_ATI1,
@@ -242,6 +247,7 @@ BC_TO_FOURCC: dict[BCFormat, int] = {
 }
 
 FOURCC_TO_BC: dict[int, BCFormat] = {v: k for k, v in BC_TO_FOURCC.items()}
+FOURCC_TO_BC[FOURCC_DXT1] = BCFormat.BC1
 
 
 # ── DX9 format codes (YTD m_Format field) ────────────────────────────────
@@ -254,6 +260,7 @@ D3DFMT_L8 = 50
 
 BC_TO_DX9: dict[BCFormat, int] = {
     BCFormat.BC1: FOURCC_DXT1,
+    BCFormat.BC1A: FOURCC_DXT1,
     BCFormat.BC2: FOURCC_DXT3,
     BCFormat.BC3: FOURCC_DXT5,
     BCFormat.BC4: FOURCC_ATI1,
@@ -267,6 +274,7 @@ BC_TO_DX9: dict[BCFormat, int] = {
 }
 
 DX9_TO_BC: dict[int, BCFormat] = {v: k for k, v in BC_TO_DX9.items()}
+DX9_TO_BC[FOURCC_DXT1] = BCFormat.BC1
 
 
 # ── RSC8 texture format codes (DXGI values — GTA V Enhanced / RDR2) ──────
@@ -304,6 +312,7 @@ class Rsc8TextureFormat(IntEnum):
 
 BC_TO_RSC8: dict[BCFormat, int] = {
     BCFormat.BC1: Rsc8TextureFormat.BC1_UNORM,
+    BCFormat.BC1A: Rsc8TextureFormat.BC1_UNORM,
     BCFormat.BC2: Rsc8TextureFormat.BC2_UNORM,
     BCFormat.BC3: Rsc8TextureFormat.BC3_UNORM,
     BCFormat.BC4: Rsc8TextureFormat.BC4_UNORM,
@@ -326,6 +335,7 @@ BC_TO_RSC8: dict[BCFormat, int] = {
 }
 
 RSC8_TO_BC: dict[int, BCFormat] = {v: k for k, v in BC_TO_RSC8.items()}
+RSC8_TO_BC[Rsc8TextureFormat.BC1_UNORM] = BCFormat.BC1
 
 # SRGB variants map to the same BCFormat (same block encoding, different color space)
 RSC8_TO_BC[Rsc8TextureFormat.BC1_UNORM_SRGB] = BCFormat.BC1
@@ -350,6 +360,7 @@ class Rsc5TextureFormat(IntEnum):
 
 BC_TO_RSC5: dict[BCFormat, int] = {
     BCFormat.BC1: Rsc5TextureFormat.DXT1,
+    BCFormat.BC1A: Rsc5TextureFormat.DXT1,
     BCFormat.BC2: Rsc5TextureFormat.DXT3,
     BCFormat.BC3: Rsc5TextureFormat.DXT5,
     BCFormat.A8R8G8B8: Rsc5TextureFormat.A8R8G8B8,

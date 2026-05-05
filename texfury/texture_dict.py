@@ -43,6 +43,21 @@ def v2o(addr: int) -> int: return addr - DAT_VIRTUAL_BASE
 def p2o(addr: int) -> int: return addr - DAT_PHYSICAL_BASE
 
 
+def _slice_texture_data(physical_data: bytes, phys_off: int, data_size: int,
+                        *, name: str, width: int, height: int,
+                        mip_levels: int) -> bytes:
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Invalid dimensions for '{name}': {width}x{height}")
+    if mip_levels < 1:
+        raise ValueError(f"Invalid mip count for '{name}': {mip_levels}")
+    if phys_off < 0 or data_size < 0 or phys_off + data_size > len(physical_data):
+        raise ValueError(
+            f"Texture data for '{name}' is outside the physical buffer "
+            f"(offset={phys_off}, size={data_size}, buffer={len(physical_data)})"
+        )
+    return physical_data[phys_off:phys_off + data_size]
+
+
 def _detect_game(file_data: bytes) -> Game:
     """Detect game from the RSC magic bytes and version."""
     if len(file_data) < 12:
@@ -84,7 +99,7 @@ def _read_name(virtual_data: bytes, name_ptr: int) -> str:
 
 def _block_stride(fmt: BCFormat) -> int:
     """Block stride in bytes. Used by RDR2 and GTA V Enhanced."""
-    if fmt in (BCFormat.BC1, BCFormat.BC4):
+    if fmt in (BCFormat.BC1, BCFormat.BC1A, BCFormat.BC4):
         return 8
     if fmt in (BCFormat.BC3, BCFormat.BC5, BCFormat.BC7):
         return 16
@@ -445,7 +460,9 @@ class ITD:
                     suggested_fmt = BCFormat.BC3
                     needs_format = True
                     fixes.append(f"format BC1→BC3 (has transparency)")
-                elif not transparent and tex.format in (BCFormat.BC3, BCFormat.BC7):
+                elif not transparent and tex.format in (
+                    BCFormat.BC1A, BCFormat.BC3, BCFormat.BC7,
+                ):
                     suggested_fmt = BCFormat.BC1
                     needs_format = True
                     fixes.append(f"format {tex.format.name}→BC1 (opaque)")
@@ -827,7 +844,10 @@ def _parse_gtav(file_data: bytes) -> ITD:
 
         phys_off = p2o(data_ptr)
         data_size = total_mip_data_size(width, height, fmt, mip_levels)
-        pixel_data = physical_data[phys_off:phys_off + data_size]
+        pixel_data = _slice_texture_data(
+            physical_data, phys_off, data_size, name=name,
+            width=width, height=height, mip_levels=mip_levels,
+        )
         offsets, sizes = _build_mip_info(width, height, fmt, mip_levels)
 
         td.add(Texture.from_raw(pixel_data, width, height, fmt,
@@ -1020,7 +1040,10 @@ def _parse_rdr2(file_data: bytes) -> ITD:
 
         phys_off = p2o(data_ptr)
         data_size = total_mip_data_size(width, height, fmt, mip_levels)
-        pixel_data = physical_data[phys_off:phys_off + data_size]
+        pixel_data = _slice_texture_data(
+            physical_data, phys_off, data_size, name=name,
+            width=width, height=height, mip_levels=mip_levels,
+        )
         offsets, sizes = _build_mip_info(width, height, fmt, mip_levels)
 
         td.add(Texture.from_raw(pixel_data, width, height, fmt,
@@ -1211,7 +1234,10 @@ def _parse_enhanced(file_data: bytes) -> ITD:
 
         phys_off = p2o(data_ptr)
         data_size = total_mip_data_size(width, height, fmt, mip_levels)
-        pixel_data = physical_data[phys_off:phys_off + data_size]
+        pixel_data = _slice_texture_data(
+            physical_data, phys_off, data_size, name=name,
+            width=width, height=height, mip_levels=mip_levels,
+        )
         offsets, sizes = _build_mip_info(width, height, fmt, mip_levels)
 
         td.add(Texture.from_raw(pixel_data, width, height, fmt,
@@ -1351,7 +1377,12 @@ def _build_gta4(textures: list[Texture]) -> bytes:
         off = tex_off_base + _GTA4_TEX_SIZE * i
         format_val = BC_TO_RSC5[e.format]
         # Stride = width * bits_per_pixel / 8
-        bpp = {BCFormat.BC1: 4, BCFormat.BC3: 8, BCFormat.A8R8G8B8: 32}[e.format]
+        bpp = {
+            BCFormat.BC1: 4,
+            BCFormat.BC1A: 4,
+            BCFormat.BC3: 8,
+            BCFormat.A8R8G8B8: 32,
+        }[e.format]
         stride = e.width * bpp // 8
 
         # TextureBase (28 bytes)
@@ -1410,7 +1441,10 @@ def _parse_gta4(file_data: bytes) -> ITD:
 
         phys_off = p2o32(data_ptr)
         data_size = total_mip_data_size(width, height, fmt, mip_levels)
-        pixel_data = physical_data[phys_off:phys_off + data_size]
+        pixel_data = _slice_texture_data(
+            physical_data, phys_off, data_size, name=name,
+            width=width, height=height, mip_levels=mip_levels,
+        )
         offsets, sizes = _build_mip_info(width, height, fmt, mip_levels)
 
         td.add(Texture.from_raw(pixel_data, width, height, fmt,

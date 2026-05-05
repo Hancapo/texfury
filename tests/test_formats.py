@@ -35,7 +35,7 @@ class TestSuggestFormat:
 
 class TestBlockCompressed:
     def test_all_bc_formats_are_compressed(self):
-        for fmt in (BCFormat.BC1, BCFormat.BC2, BCFormat.BC3,
+        for fmt in (BCFormat.BC1, BCFormat.BC1A, BCFormat.BC2, BCFormat.BC3,
                     BCFormat.BC4, BCFormat.BC5, BCFormat.BC6H, BCFormat.BC7):
             assert is_block_compressed(fmt), f"{fmt.name} should be block compressed"
 
@@ -51,6 +51,7 @@ class TestBlockCompressed:
 class TestBlockByteSize:
     def test_8_byte_formats(self):
         assert block_byte_size(BCFormat.BC1) == 8
+        assert block_byte_size(BCFormat.BC1A) == 8
         assert block_byte_size(BCFormat.BC4) == 8
 
     def test_16_byte_formats(self):
@@ -146,6 +147,8 @@ class TestRowPitch:
 class TestFormatMappings:
     def test_dxgi_roundtrip(self):
         for bc, dxgi in BC_TO_DXGI.items():
+            if bc == BCFormat.BC1A:
+                continue
             assert DXGI_TO_BC[dxgi] == bc
 
     def test_dxgi_covers_all_formats(self):
@@ -154,10 +157,14 @@ class TestFormatMappings:
 
     def test_dx9_roundtrip(self):
         for bc, dx9 in BC_TO_DX9.items():
+            if bc == BCFormat.BC1A:
+                continue
             assert DX9_TO_BC[dx9] == bc
 
     def test_rsc8_roundtrip(self):
         for bc, rsc8 in BC_TO_RSC8.items():
+            if bc == BCFormat.BC1A:
+                continue
             assert RSC8_TO_BC[rsc8] == bc
 
     def test_rsc8_covers_all_formats(self):
@@ -166,6 +173,7 @@ class TestFormatMappings:
 
     def test_rsc5_coverage(self):
         assert BCFormat.BC1 in BC_TO_RSC5
+        assert BCFormat.BC1A in BC_TO_RSC5
         assert BCFormat.BC2 in BC_TO_RSC5
         assert BCFormat.BC3 in BC_TO_RSC5
         assert BCFormat.A8R8G8B8 in BC_TO_RSC5
@@ -178,6 +186,7 @@ class TestFormatMappings:
         assert BCFormat.BC6H in _GTA4_UNSUPPORTED
         assert BCFormat.BC7 in _GTA4_UNSUPPORTED
         assert BCFormat.BC1 not in _GTA4_UNSUPPORTED
+        assert BCFormat.BC1A not in _GTA4_UNSUPPORTED
         assert BCFormat.A8R8G8B8 not in _GTA4_UNSUPPORTED
 
     def test_rsc8_srgb_variants(self):

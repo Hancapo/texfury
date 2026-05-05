@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import logging
-import struct
 from pathlib import Path
-from typing import Callable
 
 log = logging.getLogger("texfury")
 
 from texfury import _native as native
 from texfury.formats import (
-    BCFormat, MipFilter, BC_TO_DXGI, BC_TO_FOURCC, FOURCC_DX10,
-    is_block_compressed, pixel_byte_size, row_pitch,
+    BCFormat, MipFilter, is_block_compressed,
 )
 
 # Try importing Pillow (optional)
@@ -89,7 +86,7 @@ class Texture:
     def has_alpha_format(self) -> bool:
         """True if the compression format supports an alpha channel."""
         return self._format in (
-            BCFormat.BC2, BCFormat.BC3, BCFormat.BC7,
+            BCFormat.BC1A, BCFormat.BC2, BCFormat.BC3, BCFormat.BC7,
             BCFormat.A8R8G8B8, BCFormat.R8G8B8A8, BCFormat.A8,
             BCFormat.B5G5R5A1, BCFormat.R10G10B10A2,
             BCFormat.R16G16B16A16_FLOAT, BCFormat.R32G32B32A32_FLOAT,
@@ -113,8 +110,8 @@ class Texture:
     @property
     def pot_dimensions(self) -> tuple[int, int]:
         """Nearest power-of-two dimensions for this texture."""
-        return (native.next_power_of_two(self._width),
-                native.next_power_of_two(self._height))
+        return (native.nearest_power_of_two(self._width),
+                native.nearest_power_of_two(self._height))
 
     @property
     def is_block_compressed(self) -> bool:
@@ -360,8 +357,11 @@ class Texture:
 
     def to_dds_bytes(self) -> bytes:
         """Return complete DDS file as bytes."""
-        return _build_dds_bytes(self._width, self._height, self._format,
-                                self._mip_count, self._mip_sizes, self._data)
+        c = self._to_compressed_handle()
+        try:
+            return native.save_dds_memory(c)
+        finally:
+            native.free_compressed(c)
 
     def to_rgba(self, mip: int = 0) -> tuple[bytes, int, int]:
         """Decompress to raw RGBA pixels.
@@ -533,7 +533,15 @@ class Texture:
 
     def _to_compressed_handle(self):
         """Build a native TfCompressed handle from this texture's data."""
-        return native.load_dds_memory(self.to_dds_bytes())
+        return native.create_compressed(
+            self._data,
+            self._width,
+            self._height,
+            int(self._format),
+            self._mip_count,
+            self._mip_offsets,
+            self._mip_sizes,
+        )
 
     @classmethod
     def _compress_image(cls, img, *, format: BCFormat, quality: float,
@@ -554,7 +562,7 @@ class Texture:
                                 min_mip_size, quality, int(mip_filter))
             try:
                 tex = cls._from_compressed_handle(c, name)
-                tex._has_transparency = transparent
+                tex._has_transparency = transparent and tex.has_alpha_format
                 return tex
             finally:
                 native.free_compressed(c)
@@ -589,94 +597,3 @@ class Texture:
     def __repr__(self) -> str:
         return (f"Texture(name={self._name!r}, {self._width}x{self._height}, "
                 f"format={self._format.name}, mips={self._mip_count})")
-
-
-# ── DDS file builder ─────────────────────────────────────────────────────────
-
-_DDS_MAGIC = 0x20534444
-_DDSD_CAPS = 0x1
-_DDSD_HEIGHT = 0x2
-_DDSD_WIDTH = 0x4
-_DDSD_PITCH = 0x8
-_DDSD_PIXELFORMAT = 0x1000
-_DDSD_MIPMAPCOUNT = 0x20000
-_DDSD_LINEARSIZE = 0x80000
-_DDPF_ALPHAPIXELS = 0x1
-_DDPF_FOURCC = 0x4
-_DDPF_RGB = 0x40
-_DDSCAPS_TEXTURE = 0x1000
-_DDSCAPS_COMPLEX = 0x8
-_DDSCAPS_MIPMAP = 0x400000
-
-
-def _build_dds_bytes(width: int, height: int, fmt: BCFormat,
-                     mip_count: int, mip_sizes: list[int],
-                     pixel_data: bytes) -> bytes:
-    """Build a complete DDS file from pixel data."""
-    compressed = is_block_compressed(fmt)
-
-    # Formats that can be expressed with legacy DDS FourCC (no DX10 header needed)
-    legacy_fourcc = BC_TO_FOURCC.get(fmt)
-
-    # A8R8G8B8 uses legacy pixel format masks (no FourCC, no DX10)
-    legacy_uncompressed = fmt == BCFormat.A8R8G8B8
-
-    # Everything else needs the DX10 extended header
-    use_dx10 = not legacy_fourcc and not legacy_uncompressed
-
-    hdr = bytearray(124)
-    struct.pack_into("<I", hdr, 0, 124)  # size
-
-    if compressed:
-        flags = _DDSD_CAPS | _DDSD_HEIGHT | _DDSD_WIDTH | _DDSD_PIXELFORMAT | _DDSD_LINEARSIZE
-    else:
-        flags = _DDSD_CAPS | _DDSD_HEIGHT | _DDSD_WIDTH | _DDSD_PIXELFORMAT | _DDSD_PITCH
-    if mip_count > 1:
-        flags |= _DDSD_MIPMAPCOUNT
-    struct.pack_into("<I", hdr, 4, flags)
-    struct.pack_into("<I", hdr, 8, height)
-    struct.pack_into("<I", hdr, 12, width)
-
-    if compressed:
-        struct.pack_into("<I", hdr, 16, mip_sizes[0] if mip_sizes else 0)
-    else:
-        struct.pack_into("<I", hdr, 16, row_pitch(width, fmt))
-
-    struct.pack_into("<I", hdr, 20, 1)  # depth
-    struct.pack_into("<I", hdr, 24, mip_count)
-    # reserved1[11] stays zero
-
-    # Pixel format at header offset 72
-    struct.pack_into("<I", hdr, 72, 32)   # pf.size
-
-    if legacy_uncompressed:
-        struct.pack_into("<I", hdr, 76, _DDPF_RGB | _DDPF_ALPHAPIXELS)
-        struct.pack_into("<I", hdr, 84, 32)          # rgbBitCount
-        struct.pack_into("<I", hdr, 88, 0x00FF0000)  # rBitMask
-        struct.pack_into("<I", hdr, 92, 0x0000FF00)  # gBitMask
-        struct.pack_into("<I", hdr, 96, 0x000000FF)  # bBitMask
-        struct.pack_into("<I", hdr, 100, 0xFF000000)  # aBitMask
-    elif legacy_fourcc:
-        struct.pack_into("<I", hdr, 76, _DDPF_FOURCC)
-        struct.pack_into("<I", hdr, 80, legacy_fourcc)
-    else:
-        # DX10 extended header — covers BC4, BC5, BC6H, BC7, and all new formats
-        struct.pack_into("<I", hdr, 76, _DDPF_FOURCC)
-        struct.pack_into("<I", hdr, 80, FOURCC_DX10)
-
-    caps = _DDSCAPS_TEXTURE
-    if mip_count > 1:
-        caps |= _DDSCAPS_COMPLEX | _DDSCAPS_MIPMAP
-    struct.pack_into("<I", hdr, 104, caps)
-
-    parts = [struct.pack("<I", _DDS_MAGIC), bytes(hdr)]
-
-    if use_dx10:
-        dx10 = bytearray(20)
-        struct.pack_into("<I", dx10, 0, int(BC_TO_DXGI[fmt]))
-        struct.pack_into("<I", dx10, 4, 3)  # D3D10_RESOURCE_DIMENSION_TEXTURE2D
-        struct.pack_into("<I", dx10, 12, 1)  # arraySize
-        parts.append(bytes(dx10))
-
-    parts.append(pixel_data)
-    return b"".join(parts)
