@@ -17,7 +17,7 @@ from texfury.utils import (
     image_dimensions,
 )
 
-__version__ = "1.5.2"
+__version__ = "1.6.0"
 
 __all__ = [
     "BCFormat",

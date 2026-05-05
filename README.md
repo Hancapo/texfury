@@ -6,12 +6,12 @@ Built on **bc7enc_rdo** + **ISPC bc7e** for high-quality block compression, with
 
 ## Features
 
-- **20 texture formats** — BC1–BC7 block compression, plus A8R8G8B8, R8G8B8A8, B5G6R5, B5G5R5A1, R10G10B10A2, R8, A8, R8G8, and float/half-float variants
+- **21 texture formats** — BC1–BC7 block compression including explicit `BC1A` punch-through alpha, plus A8R8G8B8, R8G8B8A8, B5G6R5, B5G5R5A1, R10G10B10A2, R8, A8, R8G8, and float/half-float variants
 - **DDS** file read/write from files or memory (legacy + DX10 extended headers)
 - **Texture dictionaries** — create and extract `.wtd` (GTA IV) and `.ytd` (GTA V, GTA V gen9, RDR2)
 - **Automatic texture repair** — `fix_textures()` fixes missing mipmaps, non-POT dimensions, and optimizes format choice
 - **Mipmap generation** with configurable filters and minimum size
-- **Automatic power-of-two resize** (sRGB-aware via stb_image_resize2)
+- **Automatic nearest power-of-two resize** (sRGB-aware via stb_image_resize2)
 - **Transparency detection** without manual pixel iteration
 - **Oodle & Deflate compression** for RDR2 via `RscCompression` enum
 - **Pillow integration** — accept `PIL.Image` objects (Pillow is optional)
@@ -110,13 +110,14 @@ from texfury import BCFormat
 
 **Choosing a format:**
 
-- **Opaque textures** (no transparency): `BC1` for speed/size, `BC7` for quality
-- **Textures with alpha**: `BC3` or `BC7`
+- **Opaque textures** (no transparency): `BC1` for speed/size with improved dark-block handling, `BC7` for quality
+- **Binary alpha / cutouts**: `BC1A` for DXT1 punch-through alpha
+- **Smooth alpha**: `BC3` or `BC7`
 - **Normal maps**: `BC5`
 - **Grayscale / height maps**: `BC4`
 - **Must be pixel-perfect**: `A8R8G8B8` or `R8G8B8A8`
 
-> **GTA IV note:** Only `BC1`, `BC2`, `BC3`, `A8R8G8B8`, `B5G5R5A1`, `B5G6R5`, `A8`, and `R8` are supported.
+> **GTA IV note:** Only `BC1`, `BC1A`, `BC2`, `BC3`, `A8R8G8B8`, `B5G5R5A1`, `B5G6R5`, `A8`, and `R8` are supported. `BC1A` is written as DXT1 and reads back as `BC1`.
 
 ---
 
@@ -458,7 +459,7 @@ td.save("vehicles_fixed.ytd")
 Fixes applied:
 - **Non-power-of-two** dimensions are resized to nearest POT
 - **Missing mipmaps** are regenerated
-- **Format optimization** — opaque BC3/BC7 textures are switched to BC1, transparent BC1 textures are switched to BC3
+- **Format optimization** — opaque BC1A/BC3/BC7 textures are switched to BC1, transparent BC1 textures are switched to BC3
 
 The `ignore` parameter accepts a list or set of texture names to skip.
 
@@ -632,13 +633,13 @@ next_power_of_two(500)   # 512
 
 #### `pot_dimensions(width, height)`
 
-Get power-of-two dimensions for a given size.
+Get nearest power-of-two dimensions for a given size.
 
 ```python
 from texfury import pot_dimensions
 
-pot_dimensions(300, 400)   # (512, 512)
-pot_dimensions(1920, 1080) # (2048, 2048)
+pot_dimensions(300, 400)   # (256, 512)
+pot_dimensions(1920, 1080) # (2048, 1024)
 ```
 
 #### `image_dimensions(source)`
@@ -757,7 +758,7 @@ BC7 is the slowest format to encode but produces the best visual quality. For ra
 ## Limitations
 
 - **Windows only** — the native DLL is compiled for x64 Windows with MSVC
-- **Power-of-two textures** — texture dictionaries require POT dimensions; `resize_to_pot=True` handles this automatically
+- **Power-of-two textures** — texture dictionaries require POT dimensions; `resize_to_pot=True` handles this automatically using nearest POT sizing
 - **No BC2 / BC6H encoding** — BC2 (DXT3) and BC6H (HDR) can be read but not created from PNG
-- **GTA IV format support** — only BC1, BC2, BC3, A8R8G8B8, B5G5R5A1, B5G6R5, A8, and R8
+- **GTA IV format support** — only BC1, BC1A, BC2, BC3, A8R8G8B8, B5G5R5A1, B5G6R5, A8, and R8
 - **Max texture size** — limited by available memory; typical textures are 256-2048px
