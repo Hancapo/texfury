@@ -177,7 +177,7 @@ tex.data        # bytes — raw pixel data (all mip levels concatenated)
 
 #### Creating Textures
 
-##### `Texture.from_image(source, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, name)`
+##### `Texture.from_image(source, *, format, quality, generate_mipmaps, min_mip_size, resize, max_size, resize_to_pot, mip_filter, name)`
 
 Load an image file and compress it.
 
@@ -188,15 +188,19 @@ tex = Texture.from_image(
     quality=0.7,                    # 0.0 = fastest, 1.0 = best quality
     generate_mipmaps=True,          # default
     min_mip_size=4,                 # smallest mip dimension (default: 4)
+    max_size=1024,                  # optional: fit inside 1024x1024 before compression
+    resize=None,                    # optional: exact (width, height) before compression
     resize_to_pot=True,             # auto-resize to power-of-two (default)
     mip_filter=MipFilter.MITCHELL,  # downsampling filter (default)
     name="my_texture",              # defaults to filename stem
 )
 ```
 
+`resize` and `max_size` run before compression, so they avoid the double encode that happens with `tex.resize()`. If either is set, it takes precedence over `resize_to_pot`.
+
 **Supported image formats:** PNG, JPG/JPEG, TGA, BMP, PSD, WebP, GIF, HDR, PNM/PPM natively. With Pillow installed, any format Pillow supports (TIFF, ICO, EPS, etc.) works automatically as a fallback.
 
-##### `Texture.from_bytes(data, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, recompress, name)`
+##### `Texture.from_bytes(data, *, format, quality, generate_mipmaps, min_mip_size, resize, max_size, resize_to_pot, mip_filter, recompress, name)`
 
 Load an image or DDS from in-memory bytes. DDS files are auto-detected and loaded as-is by default.
 
@@ -228,7 +232,7 @@ Load a DDS texture from in-memory bytes.
 tex = Texture.from_dds_bytes(dds_data, name="from_memory")
 ```
 
-##### `Texture.from_pil(image, *, format, quality, generate_mipmaps, min_mip_size, resize_to_pot, mip_filter, name)`
+##### `Texture.from_pil(image, *, format, quality, generate_mipmaps, min_mip_size, resize, max_size, resize_to_pot, mip_filter, name)`
 
 Create from a Pillow `Image` object. Requires Pillow.
 
@@ -642,6 +646,17 @@ pot_dimensions(300, 400)   # (256, 512)
 pot_dimensions(1920, 1080) # (2048, 1024)
 ```
 
+#### `fit_dimensions(width, height, max_size)`
+
+Get dimensions that fit inside a maximum size while preserving aspect ratio.
+
+```python
+from texfury import fit_dimensions
+
+fit_dimensions(512, 1024, 512)  # (256, 512)
+fit_dimensions(300, 400, 512)   # (300, 400), no upscale by default
+```
+
 #### `image_dimensions(source)`
 
 Get width, height, and channel count of an image without full decompression.
@@ -651,6 +666,17 @@ from texfury import image_dimensions
 
 w, h, ch = image_dimensions("photo.png")
 print(f"{w}x{h}, {ch} channels")
+```
+
+#### `resize_image(source, width, height)`
+
+Resize an image and return raw RGBA bytes without compressing to DDS.
+
+```python
+from texfury import resize_image, resize_image_to_max
+
+rgba, w, h = resize_image("photo.png", 1024, 512)
+rgba, w, h = resize_image_to_max("photo.png", 512)  # preserves aspect ratio
 ```
 
 ---

@@ -1,12 +1,36 @@
 """Test image utility functions."""
 
+import struct
+import zlib
+
 import pytest
 
 from texfury import (
     has_transparency, is_power_of_two, next_power_of_two,
-    pot_dimensions, image_dimensions,
+    pot_dimensions, fit_dimensions, image_dimensions,
+    resize_image, resize_image_to_max, Texture, BCFormat,
 )
 from texfury import _native as native
+
+
+def _make_png(w: int, h: int) -> bytes:
+    raw = b"".join(b"\x00" + bytes([255, 0, 0, 255]) * w for _ in range(h))
+
+    def chunk(ctype: bytes, data: bytes) -> bytes:
+        payload = ctype + data
+        return (
+            struct.pack(">I", len(data))
+            + payload
+            + struct.pack(">I", zlib.crc32(payload) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
 
 
 class TestPowerOfTwo:
@@ -51,6 +75,23 @@ class TestPotDimensions:
         assert pot_dimensions(1025, 513) == (1024, 512)
 
 
+class TestFitDimensions:
+    def test_fits_inside_max_size(self):
+        assert fit_dimensions(512, 1024, 512) == (256, 512)
+
+    def test_does_not_upscale_by_default(self):
+        assert fit_dimensions(300, 400, 512) == (300, 400)
+
+    def test_can_upscale(self):
+        assert fit_dimensions(300, 400, 512, allow_upscale=True) == (384, 512)
+
+    def test_rejects_invalid_dimensions(self):
+        with pytest.raises(ValueError):
+            fit_dimensions(0, 100, 512)
+        with pytest.raises(ValueError):
+            fit_dimensions(100, 100, 0)
+
+
 class TestResizeToPot:
     def test_just_above_pot_resizes_down(self):
         img = native.create_image(1025, 513, bytes(1025 * 513 * 4))
@@ -88,6 +129,44 @@ class TestImageDimensions:
         w, h, ch = image_dimensions(str(png_128))
         assert w == 128
         assert h == 128
+
+
+class TestResizeImage:
+    def test_resize_image_returns_raw_rgba(self, png_128):
+        rgba, w, h = resize_image(str(png_128), 32, 64)
+        assert (w, h) == (32, 64)
+        assert len(rgba) == 32 * 64 * 4
+
+    def test_resize_image_to_max_preserves_aspect(self, tmp_path):
+        path = tmp_path / "rect.png"
+        path.write_bytes(_make_png(100, 200))
+
+        rgba, w, h = resize_image_to_max(str(path), 90)
+        assert (w, h) == (45, 90)
+        assert len(rgba) == 45 * 90 * 4
+
+
+class TestPreCompressionResize:
+    def test_from_image_can_resize_before_compression(self, tmp_path):
+        path = tmp_path / "rect.png"
+        path.write_bytes(_make_png(100, 200))
+
+        tex = Texture.from_image(
+            str(path),
+            format=BCFormat.BC1,
+            max_size=90,
+            generate_mipmaps=False,
+        )
+        assert (tex.width, tex.height) == (45, 90)
+
+    def test_resize_and_max_size_are_mutually_exclusive(self, png_128):
+        with pytest.raises(ValueError):
+            Texture.from_image(
+                str(png_128),
+                resize=(64, 64),
+                max_size=64,
+                generate_mipmaps=False,
+            )
 
 
 class TestHasTransparency:

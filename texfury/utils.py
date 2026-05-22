@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from texfury import _native as native
+from texfury.formats import MipFilter
 
 try:
     from PIL import Image as PILImage
@@ -53,6 +53,21 @@ def pot_dimensions(width: int, height: int) -> tuple[int, int]:
             native.nearest_power_of_two(height))
 
 
+def fit_dimensions(width: int, height: int, max_size: int, *,
+                   allow_upscale: bool = False) -> tuple[int, int]:
+    """Return dimensions that fit inside max_size while preserving aspect ratio."""
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be positive")
+    if max_size <= 0:
+        raise ValueError("max_size must be positive")
+
+    scale = min(max_size / width, max_size / height)
+    if not allow_upscale:
+        scale = min(scale, 1.0)
+    return (max(1, round(width * scale)),
+            max(1, round(height * scale)))
+
+
 def image_dimensions(source: str | Path) -> tuple[int, int, int]:
     """Get image dimensions and channel count without full decompression.
 
@@ -65,3 +80,31 @@ def image_dimensions(source: str | Path) -> tuple[int, int, int]:
                 native.image_channels(img))
     finally:
         native.free_image(img)
+
+
+def resize_image(source: str | Path, width: int, height: int, *,
+                 filter: MipFilter = MipFilter.MITCHELL) -> tuple[bytes, int, int]:
+    """Load an image, resize it, and return raw RGBA bytes without compression."""
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be positive")
+
+    img = native.load_image(str(Path(source).resolve()))
+    try:
+        resized = native.resize(img, width, height, int(filter))
+        try:
+            rgba = native.image_pixels(resized, width, height)
+            return rgba, width, height
+        finally:
+            native.free_image(resized)
+    finally:
+        native.free_image(img)
+
+
+def resize_image_to_max(source: str | Path, max_size: int, *,
+                        filter: MipFilter = MipFilter.MITCHELL,
+                        allow_upscale: bool = False) -> tuple[bytes, int, int]:
+    """Resize an image to fit inside max_size and return raw RGBA bytes."""
+    width, height, _ = image_dimensions(source)
+    new_w, new_h = fit_dimensions(
+        width, height, max_size, allow_upscale=allow_upscale)
+    return resize_image(source, new_w, new_h, filter=filter)

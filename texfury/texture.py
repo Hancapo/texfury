@@ -11,6 +11,7 @@ from texfury import _native as native
 from texfury.formats import (
     BCFormat, MipFilter, is_block_compressed,
 )
+from texfury.utils import fit_dimensions
 
 # Try importing Pillow (optional)
 try:
@@ -126,6 +127,9 @@ class Texture:
                    quality: float = 0.7,
                    generate_mipmaps: bool = True,
                    min_mip_size: int = 4,
+                   resize: tuple[int, int] | None = None,
+                   max_size: int | None = None,
+                   allow_upscale: bool = False,
                    resize_to_pot: bool = True,
                    mip_filter: MipFilter = MipFilter.MITCHELL,
                    name: str = "") -> Texture:
@@ -143,6 +147,12 @@ class Texture:
             Generate mipmap chain.
         min_mip_size : int
             Minimum dimension for smallest mip level.
+        resize : tuple[int, int] or None
+            Exact dimensions to resize to before compression.
+        max_size : int or None
+            Maximum width/height before compression, preserving aspect ratio.
+        allow_upscale : bool
+            Allow max_size resizing to enlarge images.
         resize_to_pot : bool
             Resize to nearest power-of-two if needed.
         mip_filter : MipFilter
@@ -167,6 +177,9 @@ class Texture:
                                 quality=quality,
                                 generate_mipmaps=generate_mipmaps,
                                 min_mip_size=min_mip_size,
+                                resize=resize,
+                                max_size=max_size,
+                                allow_upscale=allow_upscale,
                                 resize_to_pot=resize_to_pot,
                                 mip_filter=mip_filter,
                                 name=name)
@@ -175,6 +188,9 @@ class Texture:
             return cls._compress_image(img, format=format, quality=quality,
                                         generate_mipmaps=generate_mipmaps,
                                         min_mip_size=min_mip_size,
+                                        resize=resize,
+                                        max_size=max_size,
+                                        allow_upscale=allow_upscale,
                                         resize_to_pot=resize_to_pot,
                                         mip_filter=mip_filter,
                                         name=name)
@@ -187,6 +203,9 @@ class Texture:
                    quality: float = 0.7,
                    generate_mipmaps: bool = True,
                    min_mip_size: int = 4,
+                   resize: tuple[int, int] | None = None,
+                   max_size: int | None = None,
+                   allow_upscale: bool = False,
                    resize_to_pot: bool = True,
                    mip_filter: MipFilter = MipFilter.MITCHELL,
                    recompress: bool = False,
@@ -211,6 +230,12 @@ class Texture:
             Generate mipmap chain.
         min_mip_size : int
             Minimum dimension for smallest mip level.
+        resize : tuple[int, int] or None
+            Exact dimensions to resize to before compression.
+        max_size : int or None
+            Maximum width/height before compression, preserving aspect ratio.
+        allow_upscale : bool
+            Allow max_size resizing to enlarge images.
         resize_to_pot : bool
             Resize to nearest power-of-two if needed.
         mip_filter : MipFilter
@@ -234,6 +259,9 @@ class Texture:
                 return cls._compress_image(img, format=format, quality=quality,
                                             generate_mipmaps=generate_mipmaps,
                                             min_mip_size=min_mip_size,
+                                            resize=resize,
+                                            max_size=max_size,
+                                            allow_upscale=allow_upscale,
                                             resize_to_pot=resize_to_pot,
                                             mip_filter=mip_filter,
                                             name=name or tex.name)
@@ -251,6 +279,9 @@ class Texture:
                                 format=format, quality=quality,
                                 generate_mipmaps=generate_mipmaps,
                                 min_mip_size=min_mip_size,
+                                resize=resize,
+                                max_size=max_size,
+                                allow_upscale=allow_upscale,
                                 resize_to_pot=resize_to_pot,
                                 mip_filter=mip_filter,
                                 name=name)
@@ -259,6 +290,9 @@ class Texture:
             return cls._compress_image(img, format=format, quality=quality,
                                         generate_mipmaps=generate_mipmaps,
                                         min_mip_size=min_mip_size,
+                                        resize=resize,
+                                        max_size=max_size,
+                                        allow_upscale=allow_upscale,
                                         resize_to_pot=resize_to_pot,
                                         mip_filter=mip_filter,
                                         name=name)
@@ -271,6 +305,9 @@ class Texture:
                  quality: float = 0.7,
                  generate_mipmaps: bool = True,
                  min_mip_size: int = 4,
+                 resize: tuple[int, int] | None = None,
+                 max_size: int | None = None,
+                 allow_upscale: bool = False,
                  resize_to_pot: bool = True,
                  mip_filter: MipFilter = MipFilter.MITCHELL,
                  name: str = "") -> Texture:
@@ -289,6 +326,9 @@ class Texture:
             return cls._compress_image(img, format=format, quality=quality,
                                         generate_mipmaps=generate_mipmaps,
                                         min_mip_size=min_mip_size,
+                                        resize=resize,
+                                        max_size=max_size,
+                                        allow_upscale=allow_upscale,
                                         resize_to_pot=resize_to_pot,
                                         mip_filter=mip_filter,
                                         name=name)
@@ -547,11 +587,33 @@ class Texture:
     def _compress_image(cls, img, *, format: BCFormat, quality: float,
                         generate_mipmaps: bool, min_mip_size: int,
                         resize_to_pot: bool, mip_filter: MipFilter,
-                        name: str) -> Texture:
+                        name: str,
+                        resize: tuple[int, int] | None = None,
+                        max_size: int | None = None,
+                        allow_upscale: bool = False) -> Texture:
         work_img = img
         resized = None
 
-        if resize_to_pot and not native.is_power_of_two(
+        if resize is not None and max_size is not None:
+            raise ValueError("resize and max_size are mutually exclusive")
+
+        if resize is not None:
+            rw, rh = resize
+            if rw <= 0 or rh <= 0:
+                raise ValueError("resize dimensions must be positive")
+            resized = native.resize(img, rw, rh, int(mip_filter))
+            work_img = resized
+        elif max_size is not None:
+            rw, rh = fit_dimensions(
+                native.image_width(img),
+                native.image_height(img),
+                max_size,
+                allow_upscale=allow_upscale,
+            )
+            if rw != native.image_width(img) or rh != native.image_height(img):
+                resized = native.resize(img, rw, rh, int(mip_filter))
+                work_img = resized
+        elif resize_to_pot and not native.is_power_of_two(
                 native.image_width(img), native.image_height(img)):
             resized = native.resize_to_pot(img, int(mip_filter))
             work_img = resized

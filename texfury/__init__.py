@@ -14,10 +14,13 @@ from texfury.utils import (
     is_power_of_two,
     next_power_of_two,
     pot_dimensions,
+    fit_dimensions,
     image_dimensions,
+    resize_image,
+    resize_image_to_max,
 )
 
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 
 __all__ = [
     "BCFormat",
@@ -34,5 +37,8 @@ __all__ = [
     "is_power_of_two",
     "next_power_of_two",
     "pot_dimensions",
+    "fit_dimensions",
     "image_dimensions",
+    "resize_image",
+    "resize_image_to_max",
 ]
