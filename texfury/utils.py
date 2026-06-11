@@ -64,6 +64,15 @@ def fit_dimensions(width: int, height: int, max_size: int, *,
     scale = min(max_size / width, max_size / height)
     if not allow_upscale:
         scale = min(scale, 1.0)
+
+    # Ensure the minimum dimension is at least min_dim (defaults to 4)
+    min_dim = min(4, max_size)
+    min_input_dim = min(width, height)
+    min_scale = min_dim / min_input_dim
+
+    if scale < min_scale:
+        scale = min_scale
+
     return (max(1, round(width * scale)),
             max(1, round(height * scale)))
 

@@ -85,6 +85,14 @@ class TestFitDimensions:
     def test_can_upscale(self):
         assert fit_dimensions(300, 400, 512, allow_upscale=True) == (384, 512)
 
+    def test_clamps_min_dimension_to_four_when_max_size_is_at_least_four(self):
+        assert fit_dimensions(256, 512, 4) == (4, 8)
+        assert fit_dimensions(10, 100, 4) == (4, 40)
+        assert fit_dimensions(100, 10, 4) == (40, 4)
+
+    def test_does_not_clamp_to_four_if_max_size_less_than_four(self):
+        assert fit_dimensions(10, 100, 2) == (2, 20)
+
     def test_rejects_invalid_dimensions(self):
         with pytest.raises(ValueError):
             fit_dimensions(0, 100, 512)
