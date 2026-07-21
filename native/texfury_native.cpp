@@ -1,7 +1,7 @@
 /**
  * texfury_native.cpp
  *
- * C-API wrapper around stb_image, stb_image_resize2, and bc7enc_rdo
+ * C-API wrapper around stb_image, stb_image_resize2, bcdec, and bc7enc_rdo
  * for Python ctypes consumption.
  *
  * Compression uses rdo_bc_encoder (whole-image, multithreaded).
@@ -25,6 +25,11 @@
 
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize2.h"
+
+// BC6H decompression
+#define BCDEC_STATIC
+#define BCDEC_IMPLEMENTATION
+#include "vendor/bcdec/bcdec.h"
 
 // ── bc7enc_rdo ──────────────────────────────────────────────────────────────
 #define SUPPORT_BC7E 1
@@ -1159,10 +1164,9 @@ static float half_to_float(uint16_t h) {
 }
 
 static uint8_t float_to_u8(float f) {
-    int v = (int)(f * 255.0f + 0.5f);
-    if (v < 0) return 0;
-    if (v > 255) return 255;
-    return (uint8_t)v;
+    if (!(f > 0.0f)) return 0;
+    if (f >= 1.0f) return 255;
+    return static_cast<uint8_t>(f * 255.0f + 0.5f);
 }
 
 static uint8_t* decompress_mip(const uint8_t* src, int w, int h, TfBCFormat fmt) {
@@ -1326,6 +1330,18 @@ static uint8_t* decompress_mip(const uint8_t* src, int w, int h, TfBCFormat fmt)
                         for (int i = 0; i < 16; i++) rg_vals[i * 4 + 3] = 255;
                         rgbcx::unpack_bc5(block, rg_vals, 0, 1, 4);
                         memcpy(block_out, rg_vals, sizeof(block_out));
+                    }
+                    break;
+                case TF_BC6H:
+                    {
+                        float rgb[16 * 3] = {};
+                        bcdec_bc6h_float(block, rgb, 4 * 3, 0);
+                        for (int i = 0; i < 16; i++) {
+                            block_out[i * 4 + 0] = float_to_u8(rgb[i * 3 + 0]);
+                            block_out[i * 4 + 1] = float_to_u8(rgb[i * 3 + 1]);
+                            block_out[i * 4 + 2] = float_to_u8(rgb[i * 3 + 2]);
+                            block_out[i * 4 + 3] = 255;
+                        }
                     }
                     break;
                 case TF_BC7:

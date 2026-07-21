@@ -51,6 +51,13 @@ def _dds_fourcc_bytes(width: int, height: int, fourcc: bytes,
     return b"DDS " + bytes(hdr) + pixel_data
 
 
+def _dds_dx10_bytes(width: int, height: int, dxgi_format: int,
+                    pixel_data: bytes) -> bytes:
+    header = _dds_fourcc_bytes(width, height, b"DX10", b"")
+    dx10_header = struct.pack("<IIIII", dxgi_format, 3, 0, 1, 0)
+    return header + dx10_header + pixel_data
+
+
 class TestFromImage:
     def test_basic(self, png_64):
         tex = Texture.from_image(str(png_64), format=BCFormat.BC1)
@@ -170,6 +177,17 @@ class TestDdsRoundTrip:
                 _dds_fourcc_bytes(4, 4, b"DXT1", b"\x00" * 7),
                 name="truncated",
             )
+
+    def test_bc6h_decompresses_to_rgba_instead_of_white(self):
+        tex = Texture.from_dds_bytes(
+            _dds_dx10_bytes(4, 4, 95, bytes(16)),
+            name="bc6h_black",
+        )
+
+        rgba, w, h = tex.to_rgba()
+        assert tex.format == BCFormat.BC6H
+        assert (w, h) == (4, 4)
+        assert rgba == bytes((0, 0, 0, 255)) * 16
 
 
 class TestDecompression:
