@@ -222,6 +222,23 @@ class TestITDExtract:
             tex = Texture.from_dds(str(dds))
             assert tex.width > 0
 
+    @pytest.mark.parametrize("name", [
+        "../escaped",
+        r"..\escaped",
+    ])
+    def test_rejects_path_traversal(self, png_64, tmp_path, name):
+        td = ITD()
+        td.add(Texture.from_image(
+            png_64, format=BCFormat.BC1, name="valid_before_unsafe"))
+        td.add(Texture.from_image(png_64, format=BCFormat.BC1, name=name))
+        output = tmp_path / "extracted"
+
+        with pytest.raises(ValueError, match="Unsafe texture name"):
+            td.extract(output)
+
+        assert not (tmp_path / "escaped.dds").exists()
+        assert not (output / "valid_before_unsafe.dds").exists()
+
 
 class TestITDInspect:
     @pytest.mark.parametrize("game,ext", [

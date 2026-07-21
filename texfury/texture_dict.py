@@ -67,6 +67,18 @@ def _slice_texture_data(physical_data: bytes, phys_off: int, data_size: int,
     return physical_data[phys_off:phys_off + data_size]
 
 
+def _texture_output_path(output_dir: Path, name: str) -> Path:
+    """Return a safe, direct child path for an extracted texture."""
+    if not name or "/" in name or "\\" in name:
+        raise ValueError(f"Unsafe texture name for extraction: {name!r}")
+
+    output_root = output_dir.resolve()
+    candidate = (output_root / f"{name}.dds").resolve()
+    if candidate.parent != output_root:
+        raise ValueError(f"Unsafe texture name for extraction: {name!r}")
+    return candidate
+
+
 def _detect_game(file_data: bytes) -> Game:
     """Detect game from the RSC magic bytes and version."""
     if len(file_data) < 12:
@@ -437,8 +449,11 @@ class ITD:
         """
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
-        for tex in self._textures:
-            tex.save_dds(out / f"{tex.name}.dds")
+        output_paths = [
+            _texture_output_path(out, tex.name) for tex in self._textures
+        ]
+        for tex, output_path in zip(self._textures, output_paths):
+            tex.save_dds(output_path)
         return out
 
     @staticmethod
