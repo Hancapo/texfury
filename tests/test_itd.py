@@ -264,9 +264,12 @@ class TestITDInspect:
         assert "data_size" in entry
 
 
-def _build_minimal_ps3_ctd() -> bytes:
+def _build_minimal_ps3_ctd(*, format_byte: int = 0x86,
+                           width: int = 4, height: int = 4,
+                           physical: bytes | None = None) -> bytes:
     virtual = bytearray(0x100)
-    physical = bytes.fromhex("00 f8 00 f8 00 00 00 00")
+    if physical is None:
+        physical = bytes.fromhex("00 f8 00 f8 00 00 00 00")
 
     # PS3 pgDictionary root.
     virtual[0x00:0x04] = (0xE0678100).to_bytes(4, "big")
@@ -280,10 +283,10 @@ def _build_minimal_ps3_ctd() -> bytes:
     # grcTextureGCM object at 0x20, with CellGcmTexture at +0x08.
     tex = 0x20
     virtual[tex + 0x00:tex + 0x04] = (0xFC588A00).to_bytes(4, "big")
-    virtual[tex + 0x08:tex + 0x0C] = bytes([0x86, 1, 2, 0])  # DXT1, 1 mip, 2D
+    virtual[tex + 0x08:tex + 0x0C] = bytes([format_byte, 1, 2, 0])
     virtual[tex + 0x0C:tex + 0x10] = (0x0000A9E4).to_bytes(4, "big")
-    virtual[tex + 0x10:tex + 0x12] = (4).to_bytes(2, "big")
-    virtual[tex + 0x12:tex + 0x14] = (4).to_bytes(2, "big")
+    virtual[tex + 0x10:tex + 0x12] = width.to_bytes(2, "big")
+    virtual[tex + 0x12:tex + 0x14] = height.to_bytes(2, "big")
     virtual[tex + 0x14:tex + 0x16] = (1).to_bytes(2, "big")
     virtual[tex + 0x1C:tex + 0x20] = DAT_PHYSICAL_BASE.to_bytes(4, "big")
     virtual[tex + 0x20:tex + 0x24] = (DAT_VIRTUAL_BASE + 0xA0).to_bytes(4, "big")
@@ -315,6 +318,69 @@ class TestGTA5PS3CTD:
         assert tex.format == BCFormat.BC1
         assert tex.mip_count == 1
         assert tex.data == bytes.fromhex("00 f8 00 f8 00 00 00 00")
+
+    def test_unswizzles_b8_texture(self, tmp_path):
+        # Linear 4x4 values stored in RSX Morton order.
+        swizzled = bytes([0, 1, 4, 5, 2, 3, 6, 7,
+                          8, 9, 12, 13, 10, 11, 14, 15])
+        path = tmp_path / "swizzled_b8.ctd"
+        path.write_bytes(_build_minimal_ps3_ctd(
+            format_byte=0x81, physical=swizzled,
+        ))
+
+        tex = ITD.load(path)["ps3_test"]
+
+        assert tex.format == BCFormat.R8
+        assert tex.data == bytes(range(16))
+
+    def test_rejects_non_power_of_two_swizzled_texture(self, tmp_path):
+        path = tmp_path / "invalid_swizzle.ctd"
+        path.write_bytes(_build_minimal_ps3_ctd(
+            format_byte=0x81, width=3, height=4, physical=bytes(12),
+        ))
+
+        with pytest.raises(ValueError, match="must be powers of two: 3x4"):
+            ITD.load(path)
+
+    @pytest.mark.parametrize("format_byte,stored_pixels", [
+        (0x85, [
+            (1, 10, 20, 30), (2, 11, 21, 31),
+            (5, 14, 24, 34), (6, 15, 25, 35),
+            (3, 12, 22, 32), (4, 13, 23, 33),
+            (7, 16, 26, 36), (8, 17, 27, 37),
+            (9, 18, 28, 38), (10, 19, 29, 39),
+            (13, 22, 32, 42), (14, 23, 33, 43),
+            (11, 20, 30, 40), (12, 21, 31, 41),
+            (15, 24, 34, 44), (16, 25, 35, 45),
+        ]),
+        (0xA5, [
+            (1, 10, 20, 30), (2, 11, 21, 31),
+            (3, 12, 22, 32), (4, 13, 23, 33),
+            (5, 14, 24, 34), (6, 15, 25, 35),
+            (7, 16, 26, 36), (8, 17, 27, 37),
+            (9, 18, 28, 38), (10, 19, 29, 39),
+            (11, 20, 30, 40), (12, 21, 31, 41),
+            (13, 22, 32, 42), (14, 23, 33, 43),
+            (15, 24, 34, 44), (16, 25, 35, 45),
+        ]),
+    ])
+    def test_converts_ps3_argb_to_dds_bgra(self, tmp_path, format_byte,
+                                            stored_pixels):
+        physical = b"".join(bytes(pixel) for pixel in stored_pixels)
+        path = tmp_path / f"argb_{format_byte:02x}.ctd"
+        path.write_bytes(_build_minimal_ps3_ctd(
+            format_byte=format_byte, physical=physical,
+        ))
+
+        tex = ITD.load(path)["ps3_test"]
+        rgba, width, height = tex.to_rgba()
+
+        expected_rgba = b"".join(
+            bytes((10 + i, 20 + i, 30 + i, 1 + i)) for i in range(16)
+        )
+        assert tex.format == BCFormat.A8R8G8B8
+        assert (width, height) == (4, 4)
+        assert rgba == expected_rgba
 
     def test_inspect_ctd(self, tmp_path):
         path = tmp_path / "fixture.ctd"
