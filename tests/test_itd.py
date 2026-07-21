@@ -8,6 +8,7 @@ from texfury import (
     ITD, Game, Texture, BCFormat,
     create_dict_from_folder, extract_dict,
 )
+from texfury.rsc import DAT_PHYSICAL_BASE, DAT_VIRTUAL_BASE, build_rsc7
 
 
 class TestITDConstruction:
@@ -244,6 +245,81 @@ class TestITDInspect:
         assert "format_name" in entry
         assert "mip_count" in entry
         assert "data_size" in entry
+
+
+def _build_minimal_ps3_ctd() -> bytes:
+    virtual = bytearray(0x100)
+    physical = bytes.fromhex("00 f8 00 f8 00 00 00 00")
+
+    # PS3 pgDictionary root.
+    virtual[0x00:0x04] = (0xE0678100).to_bytes(4, "big")
+    virtual[0x04:0x08] = (DAT_VIRTUAL_BASE + 0x70).to_bytes(4, "big")
+    virtual[0x0C:0x10] = (1).to_bytes(4, "big")
+    virtual[0x10:0x14] = (DAT_VIRTUAL_BASE + 0x80).to_bytes(4, "big")
+    virtual[0x14:0x18] = (0x00010001).to_bytes(4, "big")
+    virtual[0x18:0x1C] = (DAT_VIRTUAL_BASE + 0x90).to_bytes(4, "big")
+    virtual[0x1C:0x20] = (0x00010001).to_bytes(4, "big")
+
+    # grcTextureGCM object at 0x20, with CellGcmTexture at +0x08.
+    tex = 0x20
+    virtual[tex + 0x00:tex + 0x04] = (0xFC588A00).to_bytes(4, "big")
+    virtual[tex + 0x08:tex + 0x0C] = bytes([0x86, 1, 2, 0])  # DXT1, 1 mip, 2D
+    virtual[tex + 0x0C:tex + 0x10] = (0x0000A9E4).to_bytes(4, "big")
+    virtual[tex + 0x10:tex + 0x12] = (4).to_bytes(2, "big")
+    virtual[tex + 0x12:tex + 0x14] = (4).to_bytes(2, "big")
+    virtual[tex + 0x14:tex + 0x16] = (1).to_bytes(2, "big")
+    virtual[tex + 0x1C:tex + 0x20] = DAT_PHYSICAL_BASE.to_bytes(4, "big")
+    virtual[tex + 0x20:tex + 0x24] = (DAT_VIRTUAL_BASE + 0xA0).to_bytes(4, "big")
+    virtual[tex + 0x24:tex + 0x28] = (0x00018000).to_bytes(4, "big")
+    virtual[tex + 0x28:tex + 0x2C] = (DAT_VIRTUAL_BASE + tex + 0x08).to_bytes(4, "big")
+    virtual[tex + 0x2C:tex + 0x30] = (0x20000008).to_bytes(4, "big")
+    virtual[tex + 0x34:tex + 0x38] = (DAT_VIRTUAL_BASE + 0x60).to_bytes(4, "big")
+
+    virtual[0x60:0x64] = (0).to_bytes(4, "big")
+    virtual[0x80:0x84] = (0x12345678).to_bytes(4, "big")
+    virtual[0x90:0x94] = (DAT_VIRTUAL_BASE + tex).to_bytes(4, "big")
+    virtual[0xA0:0xA9] = b"ps3_test\x00"
+
+    return build_rsc7(bytes(virtual), physical)
+
+
+class TestGTA5PS3CTD:
+    def test_load_ctd(self, tmp_path):
+        path = tmp_path / "fixture.ctd"
+        path.write_bytes(_build_minimal_ps3_ctd())
+
+        td = ITD.load(path)
+
+        assert td.game == Game.GTA5_PS3
+        assert len(td) == 1
+        tex = td["ps3_test"]
+        assert tex.width == 4
+        assert tex.height == 4
+        assert tex.format == BCFormat.BC1
+        assert tex.mip_count == 1
+        assert tex.data == bytes.fromhex("00 f8 00 f8 00 00 00 00")
+
+    def test_inspect_ctd(self, tmp_path):
+        path = tmp_path / "fixture.ctd"
+        path.write_bytes(_build_minimal_ps3_ctd())
+
+        info = ITD.inspect(path)
+
+        assert info == [{
+            "name": "ps3_test",
+            "width": 4,
+            "height": 4,
+            "format": BCFormat.BC1,
+            "format_name": "BC1",
+            "mip_count": 1,
+            "data_size": 8,
+            "gcm_format": 0x86,
+        }]
+
+    def test_save_ctd_is_read_only(self):
+        td = ITD(game=Game.GTA5_PS3)
+        with pytest.raises(NotImplementedError):
+            td.save("unsupported.ctd")
 
 
 class TestGTA4Restrictions:

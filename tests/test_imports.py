@@ -13,12 +13,13 @@ from texfury import (
 def test_game_enum_values():
     assert Game.GTA4.value == "gta4"
     assert Game.GTA5.value == "gta5"
+    assert Game.GTA5_PS3.value == "gta5_ps3"
     assert Game.GTA5_GEN9.value == "gta5_enhanced"
     assert Game.RDR2.value == "rdr2"
 
 
 def test_game_enum_count():
-    assert len(Game) == 4
+    assert len(Game) == 5
 
 
 def test_bcformat_block_compressed():

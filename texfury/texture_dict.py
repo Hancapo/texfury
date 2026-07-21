@@ -23,6 +23,10 @@ from texfury.rsc import (
     RSC7_MAGIC, build_rsc7, decompress_rsc7, parse_rsc7_header,
     RSC8_MAGIC, build_rsc8, decompress_rsc8,
 )
+from texfury.rsc.rsc7 import (
+    total_from_flags as _rsc7_total_from_flags,
+    _deflate_decompress as _rsc7_deflate_decompress,
+)
 from texfury.binary import r_u8, r_u16, r_i16, r_u32, r_u64, align, joaat
 from texfury.texture import Texture
 
@@ -33,6 +37,7 @@ class Game(str, Enum):
     """Target game / edition for texture dictionaries."""
     GTA4 = "gta4"
     GTA5 = "gta5"
+    GTA5_PS3 = "gta5_ps3"
     GTA5_GEN9 = "gta5_enhanced"
     RDR2 = "rdr2"
 
@@ -41,6 +46,10 @@ class Game(str, Enum):
 
 def v2o(addr: int) -> int: return addr - DAT_VIRTUAL_BASE
 def p2o(addr: int) -> int: return addr - DAT_PHYSICAL_BASE
+
+
+def _r_be_u16(d: bytes, o: int) -> int: return struct.unpack_from(">H", d, o)[0]
+def _r_be_u32(d: bytes, o: int) -> int: return struct.unpack_from(">I", d, o)[0]
 
 
 def _slice_texture_data(physical_data: bytes, phys_off: int, data_size: int,
@@ -73,6 +82,55 @@ def _detect_game(file_data: bytes) -> Game:
     if magic == RSC8_MAGIC:
         return Game.RDR2
     raise ValueError(f"Unknown texture dictionary format — magic: 0x{magic:08X}")
+
+
+def _decompress_rsc7_padded(data: bytes) -> tuple[bytes, bytes]:
+    """Decompress RSC7 and zero-fill sparse PS3-style page tails."""
+    _, sys_flags, gfx_flags = parse_rsc7_header(data)
+    sys_size = _rsc7_total_from_flags(sys_flags & 0x0FFFFFFF)
+    gfx_size = _rsc7_total_from_flags(gfx_flags & 0x0FFFFFFF)
+    raw = _rsc7_deflate_decompress(data[16:])
+    raw = raw[:sys_size + gfx_size].ljust(sys_size + gfx_size, b"\x00")
+    return raw[:sys_size], raw[sys_size:sys_size + gfx_size]
+
+
+def _is_gtav_ps3_ctd(file_data: bytes) -> bool:
+    try:
+        version, _, _ = parse_rsc7_header(file_data)
+        if version != 13:
+            return False
+        virtual_data, _ = _decompress_rsc7_padded(file_data)
+    except Exception:
+        return False
+
+    return _looks_like_gtav_ps3_virtual(virtual_data)
+
+
+def _looks_like_gtav_ps3_virtual(virtual_data: bytes) -> bool:
+    if len(virtual_data) < 0x20:
+        return False
+    if _r_be_u32(virtual_data, 0x00) != 0xE0678100:
+        return False
+
+    hash_ptr = _r_be_u32(virtual_data, 0x10)
+    item_ptr = _r_be_u32(virtual_data, 0x18)
+    hash_count = _r_be_u16(virtual_data, 0x14)
+    item_count = _r_be_u16(virtual_data, 0x1C)
+    if hash_count != item_count or item_count > 4096:
+        return False
+    return (
+        DAT_VIRTUAL_BASE <= hash_ptr < DAT_VIRTUAL_BASE + len(virtual_data) and
+        DAT_VIRTUAL_BASE <= item_ptr < DAT_VIRTUAL_BASE + len(virtual_data)
+    )
+
+
+def _should_parse_gtav_ps3(path: Path, file_data: bytes) -> bool:
+    suffix = path.suffix.lower()
+    if suffix == ".ctd":
+        return True
+    if suffix in {".ytd", ".wtd"}:
+        return False
+    return _is_gtav_ps3_ctd(file_data)
 
 
 def _build_mip_info(
@@ -159,6 +217,7 @@ class ITD:
         td = ITD(game=Game.GTA4)            # GTA IV (.wtd)
         td = ITD(game=Game.GTA5_GEN9)   # GTA V Enhanced
         td = ITD(game=Game.RDR2)            # RDR2
+        td = ITD.load("existing.ctd")       # GTA V PS3 read-only
 
         td.add(Texture.from_image("logo.png"))
         td.save("output.ytd")
@@ -296,6 +355,8 @@ class ITD:
                 compression = RscCompression.OODLE
             data = _build_rdr2(self._textures, compression=compression)
         else:
+            if self._game == Game.GTA5_PS3:
+                raise NotImplementedError("Writing GTA V PS3 .ctd files is not supported")
             builders = {
                 Game.GTA4: _build_gta4,
                 Game.GTA5: _build_gtav,
@@ -309,12 +370,16 @@ class ITD:
     def load(path: str | Path) -> ITD:
         """Read a texture dictionary — auto-detects game from header."""
         log.info("load: %s", path)
-        file_data = Path(path).read_bytes()
+        path = Path(path)
+        file_data = path.read_bytes()
         game = _detect_game(file_data)
+        if game == Game.GTA5 and _should_parse_gtav_ps3(path, file_data):
+            game = Game.GTA5_PS3
         log.debug("load: detected game=%s, %d bytes", game.value, len(file_data))
         parsers = {
             Game.GTA4: _parse_gta4,
             Game.GTA5: _parse_gtav,
+            Game.GTA5_PS3: _parse_gtav_ps3,
             Game.GTA5_GEN9: _parse_enhanced,
             Game.RDR2: _parse_rdr2,
         }
@@ -379,11 +444,15 @@ class ITD:
     @staticmethod
     def inspect(path: str | Path) -> list[dict]:
         """Read texture metadata without loading pixel data. Auto-detects game."""
-        file_data = Path(path).read_bytes()
+        path = Path(path)
+        file_data = path.read_bytes()
         game = _detect_game(file_data)
+        if game == Game.GTA5 and _should_parse_gtav_ps3(path, file_data):
+            game = Game.GTA5_PS3
         inspectors = {
             Game.GTA4: _inspect_gta4,
             Game.GTA5: _inspect_gtav,
+            Game.GTA5_PS3: _inspect_gtav_ps3,
             Game.GTA5_GEN9: _inspect_enhanced,
             Game.RDR2: _inspect_rdr2,
         }
@@ -882,6 +951,147 @@ def _inspect_gtav(file_data: bytes) -> list[dict]:
             "mip_count": mip_levels, "data_size": data_size,
         })
 
+    return result
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GTA V PS3 / CTD (RSC7 + GCM) internals
+# ═════════════════════════════════════════════════════════════════════════════
+
+_GCM_FORMATS: dict[int, BCFormat] = {
+    0x81: BCFormat.R8,          # CELL_GCM_TEXTURE_B8
+    0x85: BCFormat.A8R8G8B8,    # CELL_GCM_TEXTURE_A8R8G8B8
+    0x86: BCFormat.BC1,         # CELL_GCM_TEXTURE_COMPRESSED_DXT1
+    0x87: BCFormat.BC2,         # CELL_GCM_TEXTURE_COMPRESSED_DXT23
+    0x88: BCFormat.BC3,         # CELL_GCM_TEXTURE_COMPRESSED_DXT45
+}
+
+
+def _strip_gcm_texture_format(format_byte: int) -> int:
+    # Matches grcore::gcm::StripTextureFormat for the common PS3 texture flags.
+    return format_byte & 0x9F
+
+
+def _read_be_name(virtual_data: bytes, name_ptr: int) -> str:
+    name_off = v2o(name_ptr)
+    if name_off < 0 or name_off >= len(virtual_data):
+        raise ValueError(f"Texture name pointer outside virtual buffer: 0x{name_ptr:08X}")
+    name_end = virtual_data.index(b"\x00", name_off)
+    return virtual_data[name_off:name_end].decode("utf-8", errors="replace")
+
+
+def _parse_gtav_ps3_entries(file_data: bytes, *, include_data: bool) -> list[dict]:
+    virtual_data, physical_data = _decompress_rsc7_padded(file_data)
+    if not _looks_like_gtav_ps3_virtual(virtual_data):
+        raise ValueError("Not a GTA V PS3 CTD texture dictionary")
+
+    count = _r_be_u16(virtual_data, 0x1C)
+    items_off = v2o(_r_be_u32(virtual_data, 0x18))
+    if items_off < 0 or items_off + count * 4 > len(virtual_data):
+        raise ValueError("GTA V PS3 CTD texture pointer array is outside the virtual buffer")
+
+    entries: list[dict] = []
+    for i in range(count):
+        tex_ptr = _r_be_u32(virtual_data, items_off + 4 * i)
+        tex_off = v2o(tex_ptr)
+        if tex_off < 0 or tex_off + 0x38 > len(virtual_data):
+            raise ValueError(f"GTA V PS3 CTD texture {i} is outside the virtual buffer")
+
+        format_byte = virtual_data[tex_off + 0x08]
+        format_val = _strip_gcm_texture_format(format_byte)
+        fmt = _GCM_FORMATS.get(format_val)
+        if fmt is None:
+            raise ValueError(f"Unsupported GTA V PS3 GCM texture format: 0x{format_val:02X}")
+
+        mip_levels = virtual_data[tex_off + 0x09]
+        dimension = virtual_data[tex_off + 0x0A]
+        cubemap = virtual_data[tex_off + 0x0B]
+        width = _r_be_u16(virtual_data, tex_off + 0x10)
+        height = _r_be_u16(virtual_data, tex_off + 0x12)
+        depth = _r_be_u16(virtual_data, tex_off + 0x14)
+        data_ptr = _r_be_u32(virtual_data, tex_off + 0x1C)
+        name = _read_be_name(virtual_data, _r_be_u32(virtual_data, tex_off + 0x20))
+        mip_offsets_ptr = _r_be_u32(virtual_data, tex_off + 0x34)
+        mip_offsets_off = v2o(mip_offsets_ptr)
+
+        if dimension != 2 or cubemap != 0 or depth not in (0, 1):
+            raise ValueError(
+                f"Unsupported GTA V PS3 texture shape for '{name}': "
+                f"dimension={dimension}, cubemap={cubemap}, depth={depth}"
+            )
+        if mip_levels < 1:
+            raise ValueError(f"Invalid mip count for '{name}': {mip_levels}")
+        if mip_offsets_off < 0 or mip_offsets_off + mip_levels * 4 > len(virtual_data):
+            raise ValueError(f"Mip offset table for '{name}' is outside the virtual buffer")
+
+        data_base = p2o(data_ptr)
+        if data_base < 0 or data_base > len(physical_data):
+            raise ValueError(f"Texture data pointer for '{name}' is outside the physical buffer")
+
+        source_offsets = [_r_be_u32(virtual_data, mip_offsets_off + 4 * m) for m in range(mip_levels)]
+        packed_offsets: list[int] = []
+        mip_sizes: list[int] = []
+        chunks: list[bytes] = []
+        packed_off = 0
+        for mip, source_off in enumerate(source_offsets):
+            mip_w = max(1, width >> mip)
+            mip_h = max(1, height >> mip)
+            size = mip_data_size(mip_w, mip_h, fmt)
+            src = data_base + source_off
+            if src < 0 or src + size > len(physical_data):
+                raise ValueError(
+                    f"Texture data for '{name}' mip {mip} is outside the physical buffer "
+                    f"(offset={src}, size={size}, buffer={len(physical_data)})"
+                )
+            packed_offsets.append(packed_off)
+            mip_sizes.append(size)
+            if include_data:
+                chunks.append(physical_data[src:src + size])
+            packed_off += size
+
+        entry = {
+            "name": name,
+            "width": width,
+            "height": height,
+            "format": fmt,
+            "format_name": fmt.name,
+            "mip_count": mip_levels,
+            "data_size": packed_off,
+            "mip_offsets": packed_offsets,
+            "mip_sizes": mip_sizes,
+            "gcm_format": format_val,
+        }
+        if include_data:
+            entry["data"] = b"".join(chunks)
+        entries.append(entry)
+
+    return entries
+
+
+def _parse_gtav_ps3(file_data: bytes) -> ITD:
+    td = ITD(game=Game.GTA5_PS3)
+    for entry in _parse_gtav_ps3_entries(file_data, include_data=True):
+        td.add(Texture.from_raw(
+            entry["data"], entry["width"], entry["height"], entry["format"],
+            entry["mip_count"], entry["mip_offsets"], entry["mip_sizes"],
+            entry["name"],
+        ))
+    return td
+
+
+def _inspect_gtav_ps3(file_data: bytes) -> list[dict]:
+    result = []
+    for entry in _parse_gtav_ps3_entries(file_data, include_data=False):
+        result.append({
+            "name": entry["name"],
+            "width": entry["width"],
+            "height": entry["height"],
+            "format": entry["format"],
+            "format_name": entry["format_name"],
+            "mip_count": entry["mip_count"],
+            "data_size": entry["data_size"],
+            "gcm_format": entry["gcm_format"],
+        })
     return result
 
 

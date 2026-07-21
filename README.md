@@ -8,7 +8,7 @@ Built on **bc7enc_rdo** + **ISPC bc7e** for high-quality block compression, with
 
 - **21 texture formats** — BC1–BC7 block compression including explicit `BC1A` punch-through alpha, plus A8R8G8B8, R8G8B8A8, B5G6R5, B5G5R5A1, R10G10B10A2, R8, A8, R8G8, and float/half-float variants
 - **DDS** file read/write from files or memory (legacy + DX10 extended headers)
-- **Texture dictionaries** — create and extract `.wtd` (GTA IV) and `.ytd` (GTA V, GTA V gen9, RDR2)
+- **Texture dictionaries** — create and extract `.wtd` (GTA IV), `.ytd` (GTA V, GTA V gen9, RDR2), and read/extract GTA V PS3 `.ctd`
 - **Automatic texture repair** — `fix_textures()` fixes missing mipmaps, non-POT dimensions, and optimizes format choice
 - **Mipmap generation** with configurable filters and minimum size
 - **Automatic nearest power-of-two resize** (sRGB-aware via stb_image_resize2)
@@ -380,6 +380,7 @@ from texfury import Game
 |-------|--------|-----------|:-----:|:----:|-------------|
 | `Game.GTA4` | RSC5 | `.wtd` | ✅ | ✅ | GTA IV. Only BC1, BC2, BC3, A8R8G8B8, B5G5R5A1, B5G6R5, A8, R8. |
 | `Game.GTA5` | RSC7 v13 | `.ytd` | ✅ | ✅ | GTA V (Legacy). **Default.** |
+| `Game.GTA5_PS3` | RSC7 v13 + GCM | `.ctd` | ❌ | ✅ | GTA V PS3. Read/extract only. |
 | `Game.GTA5_GEN9` | RSC7 v5 | `.ytd` | ✅ | ✅ | GTA V Enhanced (gen9). |
 | `Game.RDR2` | RSC8 | `.ytd` | ✅ | ✅ | Red Dead Redemption 2. |
 
@@ -389,7 +390,7 @@ The `Game` enum controls which binary format is used when building texture dicti
 
 ### `ITD` — Internal Texture Dictionary
 
-`ITD` is a generic abstraction over RAGE engine texture dictionary formats. The file extension denotes the architecture: `.wtd` for x32 (GTA IV), `.ytd` for x64 (GTA V, RDR2). `ITD` provides a single API for all of them.
+`ITD` is a generic abstraction over RAGE engine texture dictionary formats. The file extension denotes the architecture: `.wtd` for x32 (GTA IV), `.ytd` for x64 (GTA V, RDR2), and `.ctd` for GTA V PS3 texture dictionaries. `ITD` provides a single API for all of them.
 
 #### Building
 
@@ -424,6 +425,9 @@ print(td.game)
 
 for tex in td.textures:
     print(f"{tex.name}: {tex.width}x{tex.height} {tex.format.name} ({tex.mip_count} mips)")
+
+ps3_td = ITD.load("downtown.ctd")  # Game.GTA5_PS3, read-only
+ps3_td.extract("downtown_textures/")
 ```
 
 #### Lookup, Replace, Remove
