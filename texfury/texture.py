@@ -8,6 +8,7 @@ from pathlib import Path
 log = logging.getLogger("texfury")
 
 from texfury import _native as native
+from texfury.alpha import AlphaEdgeReport, inspect_alpha_mip, repair_alpha_mip
 from texfury.formats import (
     BCFormat, MipFilter, is_block_compressed,
 )
@@ -424,6 +425,132 @@ class Texture:
                               "Install it with: pip install Pillow")
         rgba, w, h = self.to_rgba(mip)
         return PILImage.frombytes("RGBA", (w, h), rgba)
+
+    def inspect_alpha_edges(self) -> AlphaEdgeReport:
+        """Inspect every stored mip for black-matted transparent boundaries."""
+        levels = []
+        for mip in range(self._mip_count):
+            rgba, width, height = self.to_rgba(mip)
+            levels.append(inspect_alpha_mip(rgba, width, height, mip))
+        return AlphaEdgeReport(tuple(levels))
+
+    def repair_alpha_edges(
+        self,
+        *,
+        radius: int = 4,
+        quality: float = 1.0,
+    ) -> Texture:
+        """Return a texture with repaired edge RGB while preserving its alpha chain.
+
+        This is an explicit fallback for source textures whose mip 0 already
+        contains black-matted pixels. Clean textures are returned unchanged and
+        are never recompressed. Unchanged blocks retain their original bytes;
+        BC2 and BC3 repairs also retain the original encoded alpha blocks.
+        """
+        report = self.inspect_alpha_edges()
+        if not report.needs_pixel_repair:
+            return self
+        if self._format == BCFormat.BC6H:
+            raise NotImplementedError(
+                f"alpha edge repair cannot encode {self._format.name}"
+            )
+
+        mip_data: list[bytes] = []
+        offsets: list[int] = []
+        sizes: list[int] = []
+        cursor = 0
+        for mip in range(self._mip_count):
+            rgba, width, height = self.to_rgba(mip)
+            repaired, changed = repair_alpha_mip(
+                rgba, width, height, radius=radius
+            )
+            if changed == 0:
+                start = self._mip_offsets[mip]
+                data = self._data[start : start + self._mip_sizes[mip]]
+            else:
+                start = self._mip_offsets[mip]
+                original = self._data[start : start + self._mip_sizes[mip]]
+                encode_format = (
+                    BCFormat.BC3 if self._format == BCFormat.BC2
+                    else self._format
+                )
+                image = native.create_image(width, height, repaired)
+                try:
+                    compressed = native.compress(
+                        image,
+                        int(encode_format),
+                        False,
+                        1,
+                        quality,
+                        int(MipFilter.MITCHELL),
+                    )
+                    try:
+                        encoded = native.compressed_data(compressed)
+                    finally:
+                        native.free_compressed(compressed)
+                finally:
+                    native.free_image(image)
+                data = self._merge_repaired_mip(
+                    original,
+                    encoded,
+                    rgba,
+                    repaired,
+                    width,
+                    height,
+                )
+            offsets.append(cursor)
+            sizes.append(len(data))
+            mip_data.append(data)
+            cursor += len(data)
+
+        return Texture(
+            b"".join(mip_data),
+            self._width,
+            self._height,
+            self._format,
+            self._mip_count,
+            offsets,
+            sizes,
+            self._name,
+            has_transparency=True,
+        )
+
+    def _merge_repaired_mip(
+        self,
+        original: bytes,
+        encoded: bytes,
+        before_rgba: bytes,
+        after_rgba: bytes,
+        width: int,
+        height: int,
+    ) -> bytes:
+        if not self.is_block_compressed:
+            return encoded
+
+        block_size = 8 if self._format in (BCFormat.BC1, BCFormat.BC1A) else 16
+        blocks_wide = max(1, (width + 3) // 4)
+        blocks_high = max(1, (height + 3) // 4)
+        changed_blocks: set[int] = set()
+        for y in range(height):
+            for x in range(width):
+                pixel = (y * width + x) * 4
+                if before_rgba[pixel : pixel + 3] == after_rgba[pixel : pixel + 3]:
+                    continue
+                changed_blocks.add((y // 4) * blocks_wide + x // 4)
+
+        result = bytearray(original)
+        for block in changed_blocks:
+            offset = block * block_size
+            if self._format in (BCFormat.BC2, BCFormat.BC3):
+                result[offset + 8 : offset + 16] = encoded[offset + 8 : offset + 16]
+            else:
+                result[offset : offset + block_size] = encoded[
+                    offset : offset + block_size
+                ]
+        expected_size = blocks_wide * blocks_high * block_size
+        if len(result) != expected_size or len(encoded) != expected_size:
+            raise RuntimeError("repaired mip block layout changed unexpectedly")
+        return bytes(result)
 
     def quality_metrics(self, original_rgba: bytes) -> dict:
         """Compare this texture against original RGBA pixels.

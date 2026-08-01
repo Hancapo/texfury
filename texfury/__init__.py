@@ -1,5 +1,6 @@
 """texfury — Fast image-to-DDS conversion and texture dictionary toolkit."""
 
+from texfury.alpha import AlphaEdgeMipReport, AlphaEdgeReport
 from texfury.formats import BCFormat, MipFilter, RscCompression, suggest_format
 from texfury.texture import Texture
 from texfury.texture_dict import (
@@ -23,6 +24,8 @@ from texfury.utils import (
 __version__ = "1.6.2"
 
 __all__ = [
+    "AlphaEdgeMipReport",
+    "AlphaEdgeReport",
     "BCFormat",
     "MipFilter",
     "RscCompression",
