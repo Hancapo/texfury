@@ -289,6 +289,33 @@ pil_image.save("preview.png")
 
 #### Transforms
 
+##### `tex.inspect_alpha_edges()`
+
+Inspect every stored mip for transparent boundaries whose RGB is black-matted.
+The returned `AlphaEdgeReport` lists suspicious mip levels without modifying or
+recompressing the texture.
+
+```python
+report = tex.inspect_alpha_edges()
+print(report.suspicious_levels)
+```
+
+##### `tex.repair_alpha_edges(*, radius, quality)`
+
+Explicitly repair a texture whose source pixels already contain black fringes.
+Clean textures are returned unchanged and are not recompressed. For affected
+BC2/BC3 textures, unchanged blocks and the original encoded alpha blocks are
+preserved; only color blocks containing repaired pixels are replaced.
+
+```python
+if tex.inspect_alpha_edges().needs_pixel_repair:
+    tex = tex.repair_alpha_edges(radius=4, quality=1.0)
+```
+
+This operation is intentionally separate from loading, DDS export, resizing,
+and dictionary extraction. Prefer material- or shader-side alpha handling when
+the source pixels are already correct.
+
 ##### `tex.resize(width, height, *, quality, generate_mipmaps, min_mip_size, mip_filter)`
 
 Resize a texture to new dimensions. Decompresses, resizes, and recompresses with the same format.
